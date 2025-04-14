@@ -67,7 +67,8 @@ export default function VinaturelWineSelector({ onSelectWine, selectedWines = []
       region: wine.region,
       vintage: wine.vintage.toString(),
       varietals: wine.varietals,
-      externalId: wine.id
+      vinaturelId: wine.id,
+      isCustom: false
     });
   };
 

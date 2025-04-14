@@ -54,7 +54,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const availableTastings = await storage.getUserTastings(userId);
       
       // Get participating tastings (where the user is a participant)
-      const participatingTastings = [];
+      const participatingTastings: typeof availableTastings = [];
       for (const tasting of availableTastings) {
         const participant = await storage.getParticipant(tasting.id, userId);
         if (participant) {
@@ -328,7 +328,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Update flight start time
-      const updatedFlight = await storage.updateFlightTimes(flightId, new Date(), null);
+      const updatedFlight = await storage.updateFlightTimes(flightId, new Date(), undefined);
       res.json(updatedFlight);
     } catch (error) {
       res.status(500).json({ error: (error as Error).message });
@@ -368,8 +368,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Calculate scores for all guesses in this flight
       const wines = await storage.getWinesByFlight(flightId);
-      const participants = await storage.getParticipantsByTasting(tasting.tastingId);
-      const scoringRules = await storage.getScoringRule(tasting.tastingId);
+      const participants = await storage.getParticipantsByTasting(tasting.id);
+      const scoringRules = await storage.getScoringRule(tasting.id);
       
       if (scoringRules) {
         for (const participant of participants) {
