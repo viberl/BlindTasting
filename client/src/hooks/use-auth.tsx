@@ -26,6 +26,8 @@ type RegisterData = {
   name: string;
   email: string;
   password: string;
+  company: string;
+  profileImage: string;
 };
 
 export const AuthContext = createContext<AuthContextType | null>(null);

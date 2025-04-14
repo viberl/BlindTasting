@@ -17,6 +17,7 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
+  FormDescription,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { useForm } from 'react-hook-form';
@@ -35,6 +36,8 @@ const registerSchema = z.object({
   name: z.string().min(2, 'Name muss mindestens 2 Zeichen lang sein'),
   email: z.string().email('Gültige E-Mail-Adresse erforderlich'),
   password: z.string().min(6, 'Passwort muss mindestens 6 Zeichen lang sein'),
+  company: z.string().min(2, 'Firmenname muss angegeben werden'),
+  profileImage: z.string().min(1, 'Profilbild ist erforderlich'),
 });
 
 type LoginFormData = z.infer<typeof loginSchema>;
@@ -66,6 +69,8 @@ export default function AuthPage() {
       name: '',
       email: '',
       password: '',
+      company: '',
+      profileImage: '',
     },
   });
 
@@ -171,6 +176,59 @@ export default function AuthPage() {
                           <FormControl>
                             <Input placeholder="ihre.email@beispiel.de" {...field} />
                           </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={registerForm.control}
+                      name="company"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Unternehmen</FormLabel>
+                          <FormControl>
+                            <Input placeholder="Ihre Firma GmbH" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={registerForm.control}
+                      name="profileImage"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Profilbild</FormLabel>
+                          <FormControl>
+                            <div className="flex flex-col gap-2">
+                              <Input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    const reader = new FileReader();
+                                    reader.onloadend = () => {
+                                      field.onChange(reader.result as string);
+                                    };
+                                    reader.readAsDataURL(file);
+                                  }
+                                }}
+                              />
+                              {field.value && (
+                                <div className="relative w-20 h-20 mt-2 rounded-full overflow-hidden">
+                                  <img 
+                                    src={field.value} 
+                                    alt="Profil Vorschau" 
+                                    className="w-full h-full object-cover" 
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </FormControl>
+                          <FormDescription>
+                            Laden Sie ein Profilbild hoch (PNG, JPG)
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
