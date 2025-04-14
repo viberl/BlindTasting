@@ -18,7 +18,12 @@ function ensureAuthenticated(req: Request, res: Response, next: Function) {
   if (req.isAuthenticated()) {
     return next();
   }
-  res.status(401).send("Unauthorized");
+  console.log("Auth check failed: User is not authenticated", { 
+    session: req.session,
+    user: req.user,
+    isAuthenticated: req.isAuthenticated()
+  });
+  res.status(401).json({ message: "Unauthorized - Sie müssen angemeldet sein" });
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {

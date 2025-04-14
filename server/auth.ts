@@ -36,9 +36,13 @@ export function setupAuth(app: Express) {
     store: storage.sessionStore,
     cookie: {
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-      httpOnly: true
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: false // set to false for development
     }
   };
+  
+  console.log("Session secret is set:", !!process.env.SESSION_SECRET, "Store is set:", !!storage.sessionStore);
 
   app.set("trust proxy", 1);
   app.use(session(sessionSettings));

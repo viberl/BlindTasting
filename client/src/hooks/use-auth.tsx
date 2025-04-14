@@ -44,9 +44,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const fetchUser = async () => {
       try {
         setIsLoading(true);
+        console.log('Fetching user data...');
         const response = await fetch('/api/user', {
           credentials: 'include',
         });
+        console.log('User fetch response:', response.status, response.statusText);
         
         if (response.ok) {
           const userData = await response.json();
@@ -67,8 +69,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loginMutation = useMutation({
     mutationFn: async (credentials: LoginData) => {
+      console.log('Attempting login with:', credentials.email);
       const res = await apiRequest("POST", "/api/login", credentials);
-      return await res.json();
+      const userData = await res.json();
+      console.log('Login response:', userData);
+      return userData;
     },
     onSuccess: (userData: User) => {
       setUser(userData);
@@ -90,8 +95,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const registerMutation = useMutation({
     mutationFn: async (userData: RegisterData) => {
+      console.log('Attempting registration with:', userData.email);
       const res = await apiRequest("POST", "/api/register", userData);
-      return await res.json();
+      const newUserData = await res.json();
+      console.log('Registration response:', newUserData);
+      return newUserData;
     },
     onSuccess: (userData: User) => {
       setUser(userData);
