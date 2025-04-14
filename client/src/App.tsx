@@ -24,39 +24,17 @@ function Router() {
   );
 }
 
-import HostDashboard from "@/pages/host/dashboard";
-import CreateTasting from "@/pages/host/create";
-import ScoringSetup from "@/pages/host/scoring-setup";
-import WinesSetup from "@/pages/host/wines-setup";
-import TastingSummary from "@/pages/host/tasting-summary";
-import TastingDetails from "@/pages/tasting-details";
-import SubmitGuesses from "@/pages/submit-guesses";
-
-
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <div className="min-h-screen flex flex-col">
+        <div className="flex flex-col min-h-screen">
           <Navbar />
-          <div className="flex-1">
-            <Router>
-              <Switch>
-                <Route path="/" component={HomePage} />
-                <Route path="/auth" component={AuthPage} />
-                <ProtectedRoute path="/host/dashboard" component={HostDashboard} />
-                <ProtectedRoute path="/host/create" component={CreateTasting} />
-                <ProtectedRoute path="/host/scoring/:id" component={ScoringSetup} />
-                <ProtectedRoute path="/host/wines/:id" component={WinesSetup} />
-                <ProtectedRoute path="/host/summary/:id" component={TastingSummary} />
-                <ProtectedRoute path="/tasting/:id" component={TastingDetails} />
-                <ProtectedRoute path="/tasting/:id/guess" component={SubmitGuesses} />
-                <Route component={NotFound} />
-              </Switch>
-            </Router>
+          <div className="flex-grow">
+            <Router />
           </div>
           <Footer />
-          <Toaster/>
+          <Toaster />
         </div>
       </AuthProvider>
     </QueryClientProvider>
