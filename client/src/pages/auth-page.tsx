@@ -45,8 +45,21 @@ type RegisterFormData = z.infer<typeof registerSchema>;
 
 export default function AuthPage() {
   const [activeTab, setActiveTab] = useState<string>("login");
-  const { user, loginMutation, registerMutation } = useAuth();
   const [location, navigate] = useLocation();
+  
+  // Use try-catch to handle cases where AuthProvider might not be ready
+  let user = null;
+  let loginMutation = { mutate: (data: any) => {}, isPending: false };
+  let registerMutation = { mutate: (data: any) => {}, isPending: false };
+  
+  try {
+    const auth = useAuth();
+    user = auth.user;
+    loginMutation = auth.loginMutation;
+    registerMutation = auth.registerMutation;
+  } catch (error) {
+    console.log("Auth context not available yet in AuthPage");
+  }
 
   // Redirect if already logged in
   useEffect(() => {

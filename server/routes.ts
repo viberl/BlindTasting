@@ -25,6 +25,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Setup authentication routes
   setupAuth(app);
 
+  // Vinaturel API integration for wine data
+  app.get("/api/vinaturel/wines", ensureAuthenticated, async (req, res) => {
+    try {
+      const { VinaturelAPI } = require('./vinaturel-api');
+      const credentials = {
+        username: process.env.VINATUREL_USERNAME || 'verena.oleksyn@web.de',
+        password: process.env.VINATUREL_PASSWORD || 'Vinaturel123',
+        apiKey: process.env.VINATUREL_API_KEY || 'SWSCT5QYLV9K9CQMJ_XI1Q176W'
+      };
+      
+      const limit = parseInt(req.query.limit as string) || 20;
+      const page = parseInt(req.query.page as string) || 1;
+      
+      const wines = await VinaturelAPI.fetchWines(credentials, limit, page);
+      res.json(wines);
+    } catch (error) {
+      console.error('Error fetching Vinaturel wines:', error);
+      res.status(500).json({ error: 'Failed to fetch wines from Vinaturel' });
+    }
+  });
+
   // Get user's tastings (both hosted and participating)
   app.get("/api/tastings", ensureAuthenticated, async (req, res) => {
     try {
