@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { useAuth } from "@/hooks/use-auth";
-import { useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useAuth } from '@/hooks/use-auth';
+import { useQuery } from '@tanstack/react-query';
+import { useLocation } from 'wouter';
+import { Button } from '@/components/ui/button';
 import { 
   Card, 
   CardContent, 
@@ -9,27 +9,9 @@ import {
   CardFooter, 
   CardHeader, 
   CardTitle 
-} from "@/components/ui/card";
-import { 
-  Tabs, 
-  TabsContent, 
-  TabsList, 
-  TabsTrigger 
-} from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { 
-  Wine, 
-  PlusCircle, 
-  Calendar, 
-  Users, 
-  ClipboardList,
-  Clock,
-  Sparkles
-} from "lucide-react";
-import { Tasting } from "@shared/schema";
-import { Skeleton } from "@/components/ui/skeleton";
+} from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PlusCircle, CalendarClock, Users, Globe, Lock, Wine } from 'lucide-react';
 
 type TastingsResponse = {
   hosted: Tasting[];
@@ -37,311 +19,168 @@ type TastingsResponse = {
   available: Tasting[];
 };
 
+interface Tasting {
+  id: number;
+  name: string;
+  hostId: number;
+  isPublic: boolean;
+  status: string;
+  createdAt: string;
+}
+
 export default function HomePage() {
   const { user } = useAuth();
-  const [, navigate] = useLocation();
-  
-  const { data: tastings, isLoading } = useQuery<TastingsResponse>({
-    queryKey: ["/api/tastings"],
-    refetchInterval: 10000, // Refetch every 10 seconds to keep data fresh
+  const [_, navigate] = useLocation();
+
+  const { data: tastingsData, isLoading } = useQuery<TastingsResponse>({
+    queryKey: ['/api/tastings'],
+    enabled: !!user,
   });
 
-  const handleCreateTasting = () => {
-    navigate("/host/create");
-  };
-
-  const handleViewTasting = (tastingId: number, isHost: boolean) => {
-    if (isHost) {
-      navigate(`/host/dashboard/${tastingId}`);
-    } else {
-      navigate(`/tasting/${tastingId}`);
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "draft":
-        return <Badge variant="outline">Draft</Badge>;
-      case "active":
-        return <Badge variant="success" className="bg-green-100 text-green-800">Active</Badge>;
-      case "completed":
-        return <Badge variant="secondary">Completed</Badge>;
-      default:
-        return null;
-    }
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString();
+  const renderTastingCard = (tasting: Tasting, type: 'hosted' | 'participating' | 'available') => {
+    return (
+      <Card key={tasting.id} className="hover:shadow-md transition-shadow">
+        <CardHeader className="pb-2">
+          <div className="flex justify-between items-start">
+            <div>
+              <CardTitle className="text-lg">{tasting.name}</CardTitle>
+              <CardDescription>
+                Status: <span className={`font-medium ${tasting.status === 'active' ? 'text-green-600' : tasting.status === 'completed' ? 'text-blue-600' : 'text-amber-600'}`}>
+                  {tasting.status.charAt(0).toUpperCase() + tasting.status.slice(1)}
+                </span>
+              </CardDescription>
+            </div>
+            <div className="flex items-center">
+              {tasting.isPublic ? (
+                <Globe className="h-4 w-4 text-gray-500" />
+              ) : (
+                <Lock className="h-4 w-4 text-gray-500" />
+              )}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="pb-2">
+          <div className="flex items-center text-sm text-muted-foreground">
+            <CalendarClock className="mr-1 h-4 w-4" />
+            {new Date(tasting.createdAt).toLocaleDateString()}
+          </div>
+        </CardContent>
+        <CardFooter>
+          <Button 
+            onClick={() => navigate(type === 'hosted' ? `/host/dashboard/${tasting.id}` : `/tasting/${tasting.id}`)}
+            className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
+          >
+            {type === 'hosted' ? 'Verwalten' : type === 'participating' ? 'Teilnehmen' : 'Beitreten'}
+          </Button>
+        </CardFooter>
+      </Card>
+    );
   };
 
   return (
-    <div className="container mx-auto py-8 px-4 sm:px-6 lg:px-8">
-      {/* Hero Section */}
-      <div className="bg-gradient-to-r from-[#4C0519] to-[#7F1D1D] text-white rounded-lg p-8 mb-8">
-        <div className="max-w-3xl">
-          <h1 className="text-3xl md:text-4xl font-display font-bold mb-4">
-            Welcome to BlindSip, {user?.name}!
-          </h1>
-          <p className="text-lg mb-6">
-            Host or join wine blind tastings, challenge your palate, and discover new favorites.
-          </p>
-          <div className="flex space-x-4">
-            <Button 
-              className="bg-yellow-600 hover:bg-yellow-700 text-white"
-              onClick={handleCreateTasting}
-            >
-              <PlusCircle className="mr-2 h-4 w-4" />
-              Create Tasting
-            </Button>
-            <Button variant="outline" className="bg-white/10 text-white hover:bg-white/20 border-white/20">
-              Browse Tastings
-            </Button>
-          </div>
+    <div className="container mx-auto p-6">
+      <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-3xl font-bold">Willkommen, {user?.name || 'Weinliebhaber'}!</h1>
+          <p className="text-muted-foreground">Erstellen oder nehmen Sie an Weintastings teil</p>
         </div>
+        <Button 
+          onClick={() => navigate('/host/create')}
+          className="bg-[#4C0519] hover:bg-[#3A0413]"
+        >
+          <PlusCircle className="mr-2 h-4 w-4" />
+          Neues Tasting erstellen
+        </Button>
       </div>
 
-      {/* Main Content */}
-      <Tabs defaultValue="hosted" className="space-y-6">
-        <TabsList className="grid w-full md:w-auto grid-cols-3">
-          <TabsTrigger value="hosted">Hosted Tastings</TabsTrigger>
-          <TabsTrigger value="participating">Participating</TabsTrigger>
-          <TabsTrigger value="available">Available</TabsTrigger>
-        </TabsList>
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <div className="animate-spin w-10 h-10 border-4 border-[#4C0519] border-t-transparent rounded-full"></div>
+        </div>
+      ) : tastingsData && (
+        <Tabs defaultValue="hosted">
+          <TabsList className="grid w-full grid-cols-3 mb-8">
+            <TabsTrigger value="hosted" className="relative">
+              <Users className="mr-2 h-4 w-4" />
+              Gehostete Tastings
+              {tastingsData.hosted.length > 0 && (
+                <span className="absolute top-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-[#4C0519] text-xs text-white">
+                  {tastingsData.hosted.length}
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="participating" className="relative">
+              <Wine className="mr-2 h-4 w-4" />
+              Teilnahmen
+              {tastingsData.participating.length > 0 && (
+                <span className="absolute top-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-[#4C0519] text-xs text-white">
+                  {tastingsData.participating.length}
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="available" className="relative">
+              <Globe className="mr-2 h-4 w-4" />
+              Verfügbare Tastings
+              {tastingsData.available.length > 0 && (
+                <span className="absolute top-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-[#4C0519] text-xs text-white">
+                  {tastingsData.available.length}
+                </span>
+              )}
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Hosted Tastings */}
-        <TabsContent value="hosted" className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-2xl font-display font-semibold">Your Hosted Tastings</h2>
-            <Button onClick={handleCreateTasting}>
-              <PlusCircle className="mr-2 h-4 w-4" />
-              New Tasting
-            </Button>
-          </div>
-          <Separator />
-          
-          {isLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[1, 2, 3].map((i) => (
-                <Card key={i} className="overflow-hidden">
-                  <CardHeader className="pb-2">
-                    <Skeleton className="h-5 w-3/4 mb-2" />
-                    <Skeleton className="h-4 w-1/2" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-3/4" />
-                    </div>
-                  </CardContent>
-                  <CardFooter>
-                    <Skeleton className="h-9 w-full" />
-                  </CardFooter>
-                </Card>
-              ))}
-            </div>
-          ) : tastings?.hosted && tastings.hosted.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {tastings.hosted.map((tasting) => (
-                <Card key={tasting.id} className="overflow-hidden">
-                  <CardHeader className="pb-2">
-                    <div className="flex justify-between items-start">
-                      <CardTitle className="text-xl font-display">{tasting.name}</CardTitle>
-                      {getStatusBadge(tasting.status)}
-                    </div>
-                    <CardDescription>Created on {formatDate(tasting.createdAt)}</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex items-center">
-                        <Calendar className="h-4 w-4 mr-2 text-muted-foreground" />
-                        <span>{tasting.status === "completed" ? "Completed on " + formatDate(tasting.completedAt || "") : "In progress"}</span>
-                      </div>
-                      <div className="flex items-center">
-                        <Users className="h-4 w-4 mr-2 text-muted-foreground" />
-                        <span>{tasting.isPublic ? "Public" : "Private"} tasting</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                  <CardFooter>
-                    <Button 
-                      onClick={() => handleViewTasting(tasting.id, true)}
-                      className="w-full"
-                      variant={tasting.status === "draft" ? "outline" : "default"}
-                    >
-                      {tasting.status === "draft" ? "Continue Setup" : "View Dashboard"}
-                    </Button>
-                  </CardFooter>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12">
-              <Wine className="h-12 w-12 mx-auto text-muted-foreground" />
-              <h3 className="mt-4 text-lg font-medium">No hosted tastings yet</h3>
-              <p className="mt-2 text-muted-foreground">Create your first tasting to get started</p>
-              <Button onClick={handleCreateTasting} className="mt-4">
-                <PlusCircle className="mr-2 h-4 w-4" />
-                Create Tasting
-              </Button>
-            </div>
-          )}
-        </TabsContent>
+          <TabsContent value="hosted">
+            {tastingsData.hosted.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">Sie hosten noch keine Tastings.</p>
+                <Button 
+                  onClick={() => navigate('/host/create')}
+                  variant="outline"
+                  className="mt-4"
+                >
+                  <PlusCircle className="mr-2 h-4 w-4" />
+                  Erstellen Sie Ihr erstes Tasting
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {tastingsData.hosted.map(tasting => renderTastingCard(tasting, 'hosted'))}
+              </div>
+            )}
+          </TabsContent>
 
-        {/* Participating Tastings */}
-        <TabsContent value="participating" className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-2xl font-display font-semibold">Tastings You're Participating In</h2>
-          </div>
-          <Separator />
-          
-          {isLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[1, 2, 3].map((i) => (
-                <Card key={i} className="overflow-hidden">
-                  <CardHeader className="pb-2">
-                    <Skeleton className="h-5 w-3/4 mb-2" />
-                    <Skeleton className="h-4 w-1/2" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-3/4" />
-                    </div>
-                  </CardContent>
-                  <CardFooter>
-                    <Skeleton className="h-9 w-full" />
-                  </CardFooter>
-                </Card>
-              ))}
-            </div>
-          ) : tastings?.participating && tastings.participating.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {tastings.participating.map((tasting) => (
-                <Card key={tasting.id} className="overflow-hidden">
-                  <CardHeader className="pb-2">
-                    <div className="flex justify-between items-start">
-                      <CardTitle className="text-xl font-display">{tasting.name}</CardTitle>
-                      {getStatusBadge(tasting.status)}
-                    </div>
-                    <CardDescription>Host: {/* Host name would be fetched */}</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex items-center">
-                        <Clock className="h-4 w-4 mr-2 text-muted-foreground" />
-                        <span>{tasting.status === "completed" ? "Completed on " + formatDate(tasting.completedAt || "") : "In progress"}</span>
-                      </div>
-                      <div className="flex items-center">
-                        <ClipboardList className="h-4 w-4 mr-2 text-muted-foreground" />
-                        <span>Your position: <span className="font-medium">-- / --</span></span>
-                      </div>
-                      <div className="flex items-center">
-                        <Sparkles className="h-4 w-4 mr-2 text-muted-foreground" />
-                        <span>Your score: <span className="font-medium">--</span></span>
-                      </div>
-                    </div>
-                  </CardContent>
-                  <CardFooter>
-                    <Button 
-                      onClick={() => handleViewTasting(tasting.id, false)}
-                      className="w-full"
-                    >
-                      Continue Tasting
-                    </Button>
-                  </CardFooter>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12">
-              <Users className="h-12 w-12 mx-auto text-muted-foreground" />
-              <h3 className="mt-4 text-lg font-medium">Not participating in any tastings</h3>
-              <p className="mt-2 text-muted-foreground">Join a tasting or browse available tastings</p>
-              <Button variant="outline" className="mt-4">
-                Browse Tastings
-              </Button>
-            </div>
-          )}
-        </TabsContent>
+          <TabsContent value="participating">
+            {tastingsData.participating.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">Sie nehmen aktuell an keinen Tastings teil.</p>
+                <Button 
+                  onClick={() => document.querySelector('[data-value="available"]')?.dispatchEvent(new Event('click'))}
+                  variant="outline"
+                  className="mt-4"
+                >
+                  Verfügbare Tastings anzeigen
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {tastingsData.participating.map(tasting => renderTastingCard(tasting, 'participating'))}
+              </div>
+            )}
+          </TabsContent>
 
-        {/* Available Tastings */}
-        <TabsContent value="available" className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-2xl font-display font-semibold">Available Tastings</h2>
-          </div>
-          <Separator />
-          
-          {isLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[1, 2, 3].map((i) => (
-                <Card key={i} className="overflow-hidden">
-                  <CardHeader className="pb-2">
-                    <Skeleton className="h-5 w-3/4 mb-2" />
-                    <Skeleton className="h-4 w-1/2" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-3/4" />
-                    </div>
-                  </CardContent>
-                  <CardFooter>
-                    <Skeleton className="h-9 w-full" />
-                  </CardFooter>
-                </Card>
-              ))}
-            </div>
-          ) : tastings?.available && tastings.available.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {tastings.available.map((tasting) => (
-                <Card key={tasting.id} className="overflow-hidden">
-                  <CardHeader className="pb-2">
-                    <div className="flex justify-between items-start">
-                      <CardTitle className="text-xl font-display">{tasting.name}</CardTitle>
-                      {getStatusBadge(tasting.status)}
-                    </div>
-                    <CardDescription>Host: {/* Host name would be fetched */}</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex items-center">
-                        <Users className="h-4 w-4 mr-2 text-muted-foreground" />
-                        <span>{tasting.isPublic ? "Public" : "Private"} tasting</span>
-                      </div>
-                      <div className="flex items-center">
-                        <Calendar className="h-4 w-4 mr-2 text-muted-foreground" />
-                        <span>Created on {formatDate(tasting.createdAt)}</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                  <CardFooter>
-                    <Button 
-                      onClick={() => handleViewTasting(tasting.id, false)}
-                      className="w-full"
-                    >
-                      Join Tasting
-                    </Button>
-                  </CardFooter>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12">
-              <Wine className="h-12 w-12 mx-auto text-muted-foreground" />
-              <h3 className="mt-4 text-lg font-medium">No tastings available</h3>
-              <p className="mt-2 text-muted-foreground">Check back later or create your own tasting</p>
-              <Button onClick={handleCreateTasting} className="mt-4">
-                <PlusCircle className="mr-2 h-4 w-4" />
-                Create Tasting
-              </Button>
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="available">
+            {tastingsData.available.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">Es gibt derzeit keine weiteren verfügbaren Tastings.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {tastingsData.available.map(tasting => renderTastingCard(tasting, 'available'))}
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
+      )}
     </div>
   );
 }

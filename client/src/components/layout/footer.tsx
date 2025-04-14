@@ -1,74 +1,31 @@
 import { Wine } from "lucide-react";
-import { Link } from "wouter";
+import { useLocation } from "wouter";
 
 export default function Footer() {
+  const [location] = useLocation();
+
+  // Don't show footer on auth page
+  if (location === "/auth") {
+    return null;
+  }
+
   return (
-    <footer className="bg-gray-800 text-white">
-      <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-          <div className="col-span-1 md:col-span-2">
-            <div className="flex items-center">
-              <Wine className="h-8 w-8 text-yellow-600" />
-              <span className="ml-2 text-xl font-display font-bold">BlindSip</span>
-            </div>
-            <p className="mt-4 text-sm text-gray-400">
-              BlindSip is the ultimate platform for wine enthusiasts to test their tasting skills, 
-              discover new favorites, and enjoy blind tastings with friends and fellow wine lovers.
-            </p>
+    <footer className="bg-gray-50 border-t py-6">
+      <div className="container mx-auto px-4">
+        <div className="flex flex-col md:flex-row justify-between items-center">
+          <div className="flex items-center gap-2 mb-4 md:mb-0">
+            <Wine className="h-5 w-5 text-[#4C0519]" />
+            <span className="font-semibold text-lg text-[#4C0519]">BlindSip</span>
           </div>
-          <div>
-            <h3 className="text-sm font-semibold text-gray-300 tracking-wider uppercase">Resources</h3>
-            <ul className="mt-4 space-y-2">
-              <li>
-                <Link href="/how-it-works">
-                  <a className="text-sm text-gray-400 hover:text-white">How It Works</a>
-                </Link>
-              </li>
-              <li>
-                <Link href="/pricing">
-                  <a className="text-sm text-gray-400 hover:text-white">Pricing</a>
-                </Link>
-              </li>
-              <li>
-                <Link href="/blog">
-                  <a className="text-sm text-gray-400 hover:text-white">Blog</a>
-                </Link>
-              </li>
-              <li>
-                <Link href="/guides">
-                  <a className="text-sm text-gray-400 hover:text-white">Wine Guides</a>
-                </Link>
-              </li>
-            </ul>
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-gray-300 tracking-wider uppercase">Company</h3>
-            <ul className="mt-4 space-y-2">
-              <li>
-                <Link href="/about">
-                  <a className="text-sm text-gray-400 hover:text-white">About Us</a>
-                </Link>
-              </li>
-              <li>
-                <Link href="/contact">
-                  <a className="text-sm text-gray-400 hover:text-white">Contact</a>
-                </Link>
-              </li>
-              <li>
-                <Link href="/privacy">
-                  <a className="text-sm text-gray-400 hover:text-white">Privacy Policy</a>
-                </Link>
-              </li>
-              <li>
-                <Link href="/terms">
-                  <a className="text-sm text-gray-400 hover:text-white">Terms of Service</a>
-                </Link>
-              </li>
-            </ul>
+
+          <div className="text-sm text-gray-500">
+            &copy; {new Date().getFullYear()} BlindSip. Alle Rechte vorbehalten.
           </div>
         </div>
-        <div className="mt-8 pt-8 border-t border-gray-700">
-          <p className="text-sm text-gray-400">&copy; {new Date().getFullYear()} BlindSip. All rights reserved.</p>
+
+        <div className="mt-4 text-xs text-center text-gray-400">
+          <p>BlindSip verwendet die Wein-Datenbank von <a href="https://vinaturel.de" target="_blank" rel="noopener noreferrer" className="underline hover:text-[#4C0519]">vinaturel.de</a>. 
+          Trinken Sie verantwortungsvoll.</p>
         </div>
       </div>
     </footer>

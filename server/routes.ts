@@ -689,48 +689,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Query parameter 'q' is required" });
       }
       
-      // This is a placeholder - in a real app, you would make an API call to vinaturel.de
-      // As we don't have actual API details, we'll return mock data
-      
-      // Mock API call response
-      const mockApiResponse = {
-        wines: [
-          {
-            id: "wine1",
-            country: "France",
-            region: "Burgundy",
-            producer: "Domaine Faiveley",
-            name: "Corton Grand Cru",
-            vintage: "2018",
-            varietals: ["Pinot Noir"]
-          },
-          {
-            id: "wine2",
-            country: "Italy",
-            region: "Tuscany",
-            producer: "Antinori",
-            name: "Tignanello",
-            vintage: "2019",
-            varietals: ["Sangiovese", "Cabernet Sauvignon"]
-          },
-          {
-            id: "wine3",
-            country: "Spain",
-            region: "Rioja",
-            producer: "Marqués de Riscal",
-            name: "Reserva",
-            vintage: "2016",
-            varietals: ["Tempranillo", "Graciano"]
-          }
-        ]
+      // Use vinaturel API
+      const { VinaturelAPI } = require('./vinaturel-api');
+      const credentials = {
+        username: process.env.VINATUREL_USERNAME || 'verena.oleksyn@web.de',
+        password: process.env.VINATUREL_PASSWORD || 'Vinaturel123',
+        apiKey: process.env.VINATUREL_API_KEY || 'SWSCT5QYLV9K9CQMJ_XI1Q176W'
       };
       
-      // In a real implementation, you'd do this:
-      // const response = await axios.get(`https://api.vinaturel.de/search?q=${encodeURIComponent(query)}`);
-      // res.json(response.data);
+      const wines = await VinaturelAPI.fetchWines(credentials);
+      // Filter wines based on query
+      const filteredWines = wines.filter((wine: any) => {
+        const searchTerm = query.toLowerCase();
+        return (
+          wine.name.toLowerCase().includes(searchTerm) ||
+          wine.producer.toLowerCase().includes(searchTerm) ||
+          wine.country.toLowerCase().includes(searchTerm) ||
+          wine.region.toLowerCase().includes(searchTerm) ||
+          wine.varietals.some((varietal: string) => varietal.toLowerCase().includes(searchTerm))
+        );
+      });
       
-      // For now, return mock data
-      res.json(mockApiResponse);
+      res.json({ wines: filteredWines });
     } catch (error) {
       res.status(500).json({ error: (error as Error).message });
     }

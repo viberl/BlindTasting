@@ -1,88 +1,71 @@
-import { useState, useEffect } from "react";
-import { useLocation } from "wouter";
-import { useAuth } from "@/hooks/use-auth";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
-import { 
-  Card, 
-  CardContent, 
-  CardDescription, 
-  CardFooter, 
-  CardHeader, 
-  CardTitle 
-} from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { 
-  Form, 
-  FormControl, 
-  FormField, 
-  FormItem, 
-  FormLabel, 
-  FormMessage 
-} from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Wine, GlassWater } from "lucide-react";
+import { useState, useEffect } from 'react';
+import { useAuth } from '@/hooks/use-auth';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import { Input } from '@/components/ui/input';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { useLocation } from 'wouter';
+import { Wine } from 'lucide-react';
 
+// Validation schemas
 const loginSchema = z.object({
-  email: z.string().email("Please enter a valid email address"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
+  email: z.string().email('Gültige E-Mail-Adresse erforderlich'),
+  password: z.string().min(6, 'Passwort muss mindestens 6 Zeichen lang sein'),
 });
 
 const registerSchema = z.object({
-  name: z.string().min(2, "Name must be at least 2 characters"),
-  email: z.string().email("Please enter a valid email address"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-  confirmPassword: z.string().min(6, "Password must be at least 6 characters"),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: "Passwords do not match",
-  path: ["confirmPassword"],
+  name: z.string().min(2, 'Name muss mindestens 2 Zeichen lang sein'),
+  email: z.string().email('Gültige E-Mail-Adresse erforderlich'),
+  password: z.string().min(6, 'Passwort muss mindestens 6 Zeichen lang sein'),
 });
 
 type LoginFormData = z.infer<typeof loginSchema>;
 type RegisterFormData = z.infer<typeof registerSchema>;
 
 export default function AuthPage() {
-  const [activeTab, setActiveTab] = useState<string>("login");
-  const [location, navigate] = useLocation();
-  
-  // Use try-catch to handle cases where AuthProvider might not be ready
-  let user = null;
-  let loginMutation = { mutate: (data: any) => {}, isPending: false };
-  let registerMutation = { mutate: (data: any) => {}, isPending: false };
-  
-  try {
-    const auth = useAuth();
-    user = auth.user;
-    loginMutation = auth.loginMutation;
-    registerMutation = auth.registerMutation;
-  } catch (error) {
-    console.log("Auth context not available yet in AuthPage");
-  }
+  const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
+  const { user, isLoading, loginMutation, registerMutation } = useAuth();
+  const [_, navigate] = useLocation();
 
   // Redirect if already logged in
   useEffect(() => {
     if (user) {
-      navigate("/");
+      navigate('/');
     }
   }, [user, navigate]);
 
   const loginForm = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
-      email: "",
-      password: "",
+      email: '',
+      password: '',
     },
   });
 
   const registerForm = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
     defaultValues: {
-      name: "",
-      email: "",
-      password: "",
-      confirmPassword: "",
+      name: '',
+      email: '',
+      password: '',
     },
   });
 
@@ -91,227 +74,169 @@ export default function AuthPage() {
   };
 
   const onRegisterSubmit = (data: RegisterFormData) => {
-    const { name, email, password } = data;
-    registerMutation.mutate({ name, email, password });
+    registerMutation.mutate(data);
   };
 
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin w-10 h-10 border-4 border-[#4C0519] border-t-transparent rounded-full"></div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-7xl w-full flex flex-col lg:flex-row rounded-lg overflow-hidden shadow-xl">
-        {/* Hero Section */}
-        <div className="lg:w-1/2 bg-gradient-to-br from-[#4C0519] to-[#9D174D] text-white p-8 lg:p-12">
-          <div className="h-full flex flex-col justify-center">
-            <div className="flex items-center mb-6">
-              <GlassWater className="h-10 w-10 text-yellow-500" />
-              <h1 className="ml-2 text-3xl font-display font-bold">BlindSip</h1>
+    <div className="container mx-auto p-6 flex flex-col md:flex-row gap-8 min-h-screen items-center">
+      {/* Form Section */}
+      <div className="md:w-1/2 w-full max-w-md mx-auto">
+        <Card className="border-0 shadow-lg">
+          <CardHeader className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Wine className="h-6 w-6 text-[#4C0519]" />
+              <CardTitle className="text-2xl font-bold text-[#4C0519]">BlindSip</CardTitle>
             </div>
-            <h2 className="text-3xl lg:text-4xl font-display font-bold mb-6">Discover Your Wine Palate</h2>
-            <p className="text-lg mb-6">
-              Host or join blind wine tastings, challenge your senses, and discover new favorites.
-              BlindSip makes it easy to organize tasting events with friends and fellow wine enthusiasts.
-            </p>
-            <ul className="space-y-3">
-              <li className="flex items-start">
-                <div className="flex-shrink-0">
-                  <Wine className="h-6 w-6 text-yellow-500" />
-                </div>
-                <p className="ml-3 text-lg">Create custom blind tasting events</p>
-              </li>
-              <li className="flex items-start">
-                <div className="flex-shrink-0">
-                  <Wine className="h-6 w-6 text-yellow-500" />
-                </div>
-                <p className="ml-3 text-lg">Challenge your palate with friends</p>
-              </li>
-              <li className="flex items-start">
-                <div className="flex-shrink-0">
-                  <Wine className="h-6 w-6 text-yellow-500" />
-                </div>
-                <p className="ml-3 text-lg">Track your progress and scores</p>
-              </li>
-            </ul>
+            <CardDescription>
+              Melden Sie sich an, um an Weintastings teilzunehmen oder Ihre eigenen zu erstellen.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Tabs defaultValue="login" value={activeTab} onValueChange={(value) => setActiveTab(value as 'login' | 'register')}>
+              <TabsList className="grid w-full grid-cols-2 mb-6">
+                <TabsTrigger value="login">Anmelden</TabsTrigger>
+                <TabsTrigger value="register">Registrieren</TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="login">
+                <Form {...loginForm}>
+                  <form onSubmit={loginForm.handleSubmit(onLoginSubmit)} className="space-y-4">
+                    <FormField
+                      control={loginForm.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>E-Mail</FormLabel>
+                          <FormControl>
+                            <Input placeholder="ihre.email@beispiel.de" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={loginForm.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Passwort</FormLabel>
+                          <FormControl>
+                            <Input type="password" placeholder="••••••" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <Button 
+                      type="submit" 
+                      className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
+                      disabled={loginMutation.isPending}
+                    >
+                      {loginMutation.isPending ? 'Anmeldung...' : 'Anmelden'}
+                    </Button>
+                  </form>
+                </Form>
+              </TabsContent>
+              
+              <TabsContent value="register">
+                <Form {...registerForm}>
+                  <form onSubmit={registerForm.handleSubmit(onRegisterSubmit)} className="space-y-4">
+                    <FormField
+                      control={registerForm.control}
+                      name="name"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Name</FormLabel>
+                          <FormControl>
+                            <Input placeholder="Max Mustermann" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={registerForm.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>E-Mail</FormLabel>
+                          <FormControl>
+                            <Input placeholder="ihre.email@beispiel.de" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={registerForm.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Passwort</FormLabel>
+                          <FormControl>
+                            <Input type="password" placeholder="••••••" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <Button 
+                      type="submit" 
+                      className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
+                      disabled={registerMutation.isPending}
+                    >
+                      {registerMutation.isPending ? 'Registrierung...' : 'Registrieren'}
+                    </Button>
+                  </form>
+                </Form>
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+          <CardFooter className="flex flex-col space-y-4">
+            <div className="text-center text-sm text-muted-foreground mt-2">
+              <span onClick={() => setActiveTab(activeTab === 'login' ? 'register' : 'login')} className="cursor-pointer text-[#4C0519] hover:underline">
+                {activeTab === 'login' ? 'Noch kein Konto? Jetzt registrieren' : 'Bereits registriert? Anmelden'}
+              </span>
+            </div>
+          </CardFooter>
+        </Card>
+      </div>
+
+      {/* Hero Section */}
+      <div className="md:w-1/2 flex flex-col items-center md:items-start gap-6 text-center md:text-left">
+        <h1 className="text-4xl font-bold !leading-tight">
+          <span className="bg-gradient-to-r from-[#4C0519] to-[#8C1F41] bg-clip-text text-transparent">
+            Erleben Sie Blindverkostungen wie nie zuvor
+          </span>
+        </h1>
+        <p className="text-lg text-gray-600 max-w-md">
+          BlindSip macht es einfach, spannende Weintastings zu organisieren und daran teilzunehmen. Testen Sie Ihr Weinwissen in einer interaktiven Umgebung.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 w-full max-w-md">
+          <div className="bg-[#4C0519]/5 p-4 rounded-lg">
+            <h3 className="font-semibold text-[#4C0519]">Gastgeber</h3>
+            <p className="text-sm text-gray-600">Erstellen und organisieren Sie Tastings mit Freunden oder öffentlich</p>
           </div>
-        </div>
-
-        {/* Auth Forms */}
-        <div className="lg:w-1/2 bg-white p-8 lg:p-12">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-2 mb-8">
-              <TabsTrigger value="login">Login</TabsTrigger>
-              <TabsTrigger value="register">Register</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="login">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Login to Your Account</CardTitle>
-                  <CardDescription>
-                    Enter your credentials to access your BlindSip account
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Form {...loginForm}>
-                    <form onSubmit={loginForm.handleSubmit(onLoginSubmit)} className="space-y-4">
-                      <FormField
-                        control={loginForm.control}
-                        name="email"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Email</FormLabel>
-                            <FormControl>
-                              <Input 
-                                placeholder="your.email@example.com" 
-                                {...field} 
-                                type="email"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={loginForm.control}
-                        name="password"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Password</FormLabel>
-                            <FormControl>
-                              <Input 
-                                placeholder="••••••••" 
-                                type="password" 
-                                {...field} 
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <Button 
-                        type="submit" 
-                        className="w-full bg-[#4C0519] hover:bg-[#7F1D1D]"
-                        disabled={loginMutation.isPending}
-                      >
-                        {loginMutation.isPending ? "Logging in..." : "Login"}
-                      </Button>
-                    </form>
-                  </Form>
-                </CardContent>
-                <CardFooter className="flex justify-center">
-                  <p className="text-sm text-gray-500">
-                    Don't have an account?{" "}
-                    <button 
-                      className="text-[#4C0519] hover:underline" 
-                      onClick={() => setActiveTab("register")}
-                    >
-                      Register now
-                    </button>
-                  </p>
-                </CardFooter>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="register">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Create an Account</CardTitle>
-                  <CardDescription>
-                    Join BlindSip to host and participate in wine tastings
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Form {...registerForm}>
-                    <form onSubmit={registerForm.handleSubmit(onRegisterSubmit)} className="space-y-4">
-                      <FormField
-                        control={registerForm.control}
-                        name="name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Name</FormLabel>
-                            <FormControl>
-                              <Input 
-                                placeholder="John Doe" 
-                                {...field} 
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={registerForm.control}
-                        name="email"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Email</FormLabel>
-                            <FormControl>
-                              <Input 
-                                placeholder="your.email@example.com" 
-                                {...field} 
-                                type="email"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={registerForm.control}
-                        name="password"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Password</FormLabel>
-                            <FormControl>
-                              <Input 
-                                placeholder="••••••••" 
-                                type="password" 
-                                {...field} 
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={registerForm.control}
-                        name="confirmPassword"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Confirm Password</FormLabel>
-                            <FormControl>
-                              <Input 
-                                placeholder="••••••••" 
-                                type="password" 
-                                {...field} 
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <Button 
-                        type="submit" 
-                        className="w-full bg-[#4C0519] hover:bg-[#7F1D1D]"
-                        disabled={registerMutation.isPending}
-                      >
-                        {registerMutation.isPending ? "Creating Account..." : "Register"}
-                      </Button>
-                    </form>
-                  </Form>
-                </CardContent>
-                <CardFooter className="flex justify-center">
-                  <p className="text-sm text-gray-500">
-                    Already have an account?{" "}
-                    <button 
-                      className="text-[#4C0519] hover:underline" 
-                      onClick={() => setActiveTab("login")}
-                    >
-                      Login instead
-                    </button>
-                  </p>
-                </CardFooter>
-              </Card>
-            </TabsContent>
-          </Tabs>
+          <div className="bg-[#4C0519]/5 p-4 rounded-lg">
+            <h3 className="font-semibold text-[#4C0519]">Teilnehmer</h3>
+            <p className="text-sm text-gray-600">Treten Sie Tastings bei und vergleichen Sie Ihre Ergebnisse</p>
+          </div>
+          <div className="bg-[#4C0519]/5 p-4 rounded-lg">
+            <h3 className="font-semibold text-[#4C0519]">Flüge</h3>
+            <p className="text-sm text-gray-600">Organisieren Sie Weine in zeitlich begrenzten Runden</p>
+          </div>
+          <div className="bg-[#4C0519]/5 p-4 rounded-lg">
+            <h3 className="font-semibold text-[#4C0519]">Punktesystem</h3>
+            <p className="text-sm text-gray-600">Benutzerdefinierte Bewertungsregeln für verschiedene Weinattribute</p>
+          </div>
         </div>
       </div>
     </div>
