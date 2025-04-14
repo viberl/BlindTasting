@@ -104,7 +104,7 @@ export function setupAuth(app: Express) {
   });
 
   app.post("/api/login", (req, res, next) => {
-    passport.authenticate("local", (err, user, info) => {
+    passport.authenticate("local", (err: Error | null, user: Express.User | false, info: { message: string } | undefined) => {
       if (err) return next(err);
       if (!user) {
         return res.status(401).json({ message: info?.message || "Anmeldung fehlgeschlagen" });
@@ -113,7 +113,7 @@ export function setupAuth(app: Express) {
       req.login(user, (err) => {
         if (err) return next(err);
         // Don't send the password back to the client
-        const { password, ...userWithoutPassword } = user;
+        const { password, ...userWithoutPassword } = user as SelectUser;
         res.json(userWithoutPassword);
       });
     })(req, res, next);

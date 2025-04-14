@@ -3,6 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import NotFound from "@/pages/not-found";
 import HomePage from "@/pages/home-page";
 import AuthPage from "@/pages/auth-page";
+import CreateTastingPage from "@/pages/host/create-tasting";
 import { ProtectedRoute } from "./lib/protected-route";
 import Navbar from "@/components/layout/navbar";
 import Footer from "@/components/layout/footer";
@@ -16,6 +17,7 @@ function Router() {
   return (
     <Switch>
       <ProtectedRoute path="/" component={HomePage} />
+      <ProtectedRoute path="/host/create-tasting" component={CreateTastingPage} />
       <Route path="/auth" component={AuthPage} />
       <Route component={NotFound} />
     </Switch>
