@@ -207,11 +207,51 @@ export default function AuthPage() {
                                 onChange={(e) => {
                                   const file = e.target.files?.[0];
                                   if (file) {
-                                    const reader = new FileReader();
-                                    reader.onloadend = () => {
-                                      field.onChange(reader.result as string);
+                                    // Bildoptimierung
+                                    const compressImage = (file: File): Promise<string> => {
+                                      return new Promise((resolve) => {
+                                        const reader = new FileReader();
+                                        reader.onload = (event) => {
+                                          const img = new Image();
+                                          img.onload = () => {
+                                            // Bild auf maximal 300x300 Pixel reduzieren
+                                            const maxSize = 300;
+                                            let width = img.width;
+                                            let height = img.height;
+                                            
+                                            if (width > height) {
+                                              if (width > maxSize) {
+                                                height = Math.round((height * maxSize) / width);
+                                                width = maxSize;
+                                              }
+                                            } else {
+                                              if (height > maxSize) {
+                                                width = Math.round((width * maxSize) / height);
+                                                height = maxSize;
+                                              }
+                                            }
+                                            
+                                            const canvas = document.createElement('canvas');
+                                            canvas.width = width;
+                                            canvas.height = height;
+                                            
+                                            const ctx = canvas.getContext('2d');
+                                            ctx?.drawImage(img, 0, 0, width, height);
+                                            
+                                            // Als JPEG mit reduzierter Qualität speichern
+                                            const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                                            resolve(dataUrl);
+                                          };
+                                          img.src = event.target?.result as string;
+                                        };
+                                        reader.readAsDataURL(file);
+                                      });
                                     };
-                                    reader.readAsDataURL(file);
+                                    
+                                    // Bild komprimieren und dann speichern
+                                    compressImage(file).then(optimizedDataUrl => {
+                                      field.onChange(optimizedDataUrl);
+                                    });
                                   }
                                 }}
                               />
