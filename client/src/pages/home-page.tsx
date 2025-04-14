@@ -85,7 +85,7 @@ export default function HomePage() {
           <p className="text-muted-foreground">Erstellen oder nehmen Sie an Weintastings teil</p>
         </div>
         <Button 
-          onClick={() => navigate('/host/create')}
+          onClick={() => navigate('/host/create-tasting')}
           className="bg-[#4C0519] hover:bg-[#3A0413]"
         >
           <PlusCircle className="mr-2 h-4 w-4" />
@@ -134,7 +134,7 @@ export default function HomePage() {
               <div className="text-center py-12">
                 <p className="text-muted-foreground">Sie hosten noch keine Tastings.</p>
                 <Button 
-                  onClick={() => navigate('/host/create')}
+                  onClick={() => navigate('/host/create-tasting')}
                   variant="outline"
                   className="mt-4"
                 >
