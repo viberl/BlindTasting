@@ -35,10 +35,8 @@ export function setupAuth(app: Express) {
     saveUninitialized: false,
     store: storage.sessionStore,
     cookie: {
-      maxAge: 1000 * 60 * 60 * 24 * 7, // 1 week
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax"
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      httpOnly: true
     }
   };
 
@@ -50,60 +48,55 @@ export function setupAuth(app: Express) {
   passport.use(
     new LocalStrategy(
       {
-        usernameField: "email",
-        passwordField: "password"
+        usernameField: 'email',
+        passwordField: 'password'
       },
       async (email, password, done) => {
         try {
           const user = await storage.getUserByEmail(email);
           if (!user || !(await comparePasswords(password, user.password))) {
-            return done(null, false);
-          } else {
-            return done(null, user);
+            return done(null, false, { message: "Falsche E-Mail oder Passwort" });
           }
-        } catch (error) {
-          return done(error);
+          return done(null, user);
+        } catch (err) {
+          return done(err);
         }
       }
     )
   );
 
-  passport.serializeUser((user, done) => done(null, user.id));
+  passport.serializeUser((user, done) => {
+    done(null, user.id);
+  });
+
   passport.deserializeUser(async (id: number, done) => {
     try {
       const user = await storage.getUser(id);
       done(null, user);
-    } catch (error) {
-      done(error);
+    } catch (err) {
+      done(err);
     }
   });
 
   app.post("/api/register", async (req, res, next) => {
     try {
-      const { email, password, name } = req.body;
-
-      if (!email || !password || !name) {
-        return res.status(400).send("All fields are required");
-      }
-
-      const existingUser = await storage.getUserByEmail(email);
+      const existingUser = await storage.getUserByEmail(req.body.email);
       if (existingUser) {
-        return res.status(400).send("Email already registered");
+        return res.status(400).json({ message: "Diese E-Mail-Adresse wird bereits verwendet" });
       }
 
+      const hashedPassword = await hashPassword(req.body.password);
+      
       const user = await storage.createUser({
-        email,
-        password: await hashPassword(password),
-        name,
+        ...req.body,
+        password: hashedPassword,
       });
-
-      // Remove password from response
-      const userResponse = { ...user };
-      delete userResponse.password;
 
       req.login(user, (err) => {
         if (err) return next(err);
-        res.status(201).json(userResponse);
+        // Don't send the password back to the client
+        const { password, ...userWithoutPassword } = user;
+        res.status(201).json(userWithoutPassword);
       });
     } catch (error) {
       next(error);
@@ -114,17 +107,14 @@ export function setupAuth(app: Express) {
     passport.authenticate("local", (err, user, info) => {
       if (err) return next(err);
       if (!user) {
-        return res.status(401).send("Invalid email or password");
+        return res.status(401).json({ message: info?.message || "Anmeldung fehlgeschlagen" });
       }
-
-      req.login(user, (loginErr) => {
-        if (loginErr) return next(loginErr);
-        
-        // Remove password from response
-        const userResponse = { ...user };
-        delete userResponse.password;
-        
-        res.status(200).json(userResponse);
+      
+      req.login(user, (err) => {
+        if (err) return next(err);
+        // Don't send the password back to the client
+        const { password, ...userWithoutPassword } = user;
+        res.json(userWithoutPassword);
       });
     })(req, res, next);
   });
@@ -137,12 +127,12 @@ export function setupAuth(app: Express) {
   });
 
   app.get("/api/user", (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Nicht authentifiziert" });
+    }
     
-    // Remove password from response
-    const userResponse = { ...req.user };
-    delete userResponse.password;
-    
-    res.json(userResponse);
+    // Don't send the password back to the client
+    const { password, ...userWithoutPassword } = req.user as SelectUser;
+    res.json(userWithoutPassword);
   });
 }
