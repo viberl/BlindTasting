@@ -122,12 +122,22 @@ export default function AddWineDialog({ flightId, open, onOpenChange }: AddWineD
       const response = await apiRequest("POST", `/api/flights/${flightId}/wines`, wineData);
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (newWine) => {
       toast({
         title: "Wein hinzugefügt",
         description: "Der Wein wurde erfolgreich zum Flight hinzugefügt",
       });
-      queryClient.invalidateQueries({ queryKey: [`/api/tastings`, `/api/flights`] });
+      // Genauere Cache-Invalidierung für den spezifischen Flight 
+      // und die allgemeine Tastings-Abfrage
+      queryClient.invalidateQueries({ queryKey: [`/api/flights/${flightId}/wines`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/tastings`] });
+      // Wichtig: Spezifische Invalidierung für die Flights der Verkostung
+      const tastingId = newWine.tastingId;
+      if (tastingId) {
+        queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
+      }
+      
+      console.log("Wine added successfully:", newWine);
       customForm.reset();
       setSearchQuery("");
       setSelectedWine(null);
