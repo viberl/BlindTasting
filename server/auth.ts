@@ -7,6 +7,13 @@ import { promisify } from "util";
 import { storage } from "./storage";
 import { User as SelectUser } from "@shared/schema";
 
+// Erweitere die Session-Schnittstelle um benutzerdefinierte Eigenschaften
+declare module 'express-session' {
+  interface SessionData {
+    userId?: number;
+  }
+}
+
 declare global {
   namespace Express {
     interface User extends SelectUser {}
@@ -31,14 +38,14 @@ async function comparePasswords(supplied: string, stored: string) {
 export function setupAuth(app: Express) {
   const sessionSettings: session.SessionOptions = {
     secret: process.env.SESSION_SECRET || "blindsip-secret-key",
-    resave: true,
-    saveUninitialized: true,
+    resave: true, // Geändert von false zu true für bessere Session-Persistenz
+    saveUninitialized: true, // Geändert von false zu true für bessere Session-Persistenz
     store: storage.sessionStore,
     cookie: {
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
       httpOnly: true,
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production'
+      secure: false // Auf false gesetzt für Entwicklung, damit Cookies über HTTP funktionieren
     }
   };
   
@@ -98,9 +105,22 @@ export function setupAuth(app: Express) {
 
       req.login(user, (err) => {
         if (err) return next(err);
-        // Don't send the password back to the client
-        const { password, ...userWithoutPassword } = user;
-        res.status(201).json(userWithoutPassword);
+        
+        // Sitzungsvariable setzen
+        req.session.userId = user.id;
+        console.log('Registrierung erfolgreich. Session-ID:', req.sessionID, 'User ID:', user.id);
+        
+        // Session speichern, bevor wir antworten
+        req.session.save((err) => {
+          if (err) {
+            console.error('Session konnte nicht gespeichert werden:', err);
+            return next(err);
+          }
+          
+          // Don't send the password back to the client
+          const { password, ...userWithoutPassword } = user;
+          res.status(201).json(userWithoutPassword);
+        });
       });
     } catch (error) {
       next(error);
@@ -116,9 +136,22 @@ export function setupAuth(app: Express) {
       
       req.login(user, (err) => {
         if (err) return next(err);
-        // Don't send the password back to the client
-        const { password, ...userWithoutPassword } = user as SelectUser;
-        res.json(userWithoutPassword);
+        
+        // Wir setzen eine Sitzungsvariable
+        req.session.userId = (user as SelectUser).id;
+        console.log('Login erfolgreich. Session-ID:', req.sessionID, 'User ID:', (user as SelectUser).id);
+        
+        // Session speichern, bevor wir antworten
+        req.session.save((err) => {
+          if (err) {
+            console.error('Session konnte nicht gespeichert werden:', err);
+            return next(err);
+          }
+          
+          // Don't send the password back to the client
+          const { password, ...userWithoutPassword } = user as SelectUser;
+          res.json(userWithoutPassword);
+        });
       });
     })(req, res, next);
   });

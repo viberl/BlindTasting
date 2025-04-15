@@ -77,8 +77,16 @@ export default function CreateTastingPage() {
       // Öffentlichkeitsstatus festlegen
       requestData.isPublic = tastingType === "public";
       
+      console.log('Erstellen einer Verkostung mit:', { 
+        ...requestData, 
+        user: user ? 'Benutzer vorhanden' : 'Kein Benutzer',
+        userId: user?.id
+      });
+      
       const res = await apiRequest("POST", "/api/tastings", requestData);
-      return await res.json();
+      const result = await res.json();
+      console.log('Verkostungserstellung Antwort:', result);
+      return result;
     },
     onSuccess: (data) => {
       toast({
