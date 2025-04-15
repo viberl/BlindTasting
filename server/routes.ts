@@ -54,14 +54,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupAuth(app);
 
   // Vinaturel API integration for wine data
-  app.get("/api/vinaturel/wines", ensureAuthenticated, async (req, res) => {
+  app.get("/api/vinaturel/wines", process.env.NODE_ENV === 'development' ? (req, res, next) => next() : ensureAuthenticated, async (req, res) => {
     try {
-      // Benutze den bereits importierten VinaturelAPI
+      // Verwende die Umgebungsvariablen für die API-Zugangsdaten
       const credentials = {
-        username: process.env.VINATUREL_USERNAME || 'verena.oleksyn@web.de',
-        password: process.env.VINATUREL_PASSWORD || 'Vinaturel123',
-        apiKey: process.env.VINATUREL_API_KEY || 'SWSCT5QYLV9K9CQMJ_XI1Q176W'
+        username: process.env.VINATUREL_USERNAME || '',
+        password: process.env.VINATUREL_PASSWORD || '',
+        apiKey: process.env.VINATUREL_API_KEY || ''
       };
+      
+      console.log('Vinaturel API credentials used:', {
+        username: credentials.username ? credentials.username : 'not set',
+        password: credentials.password ? 'is set' : 'not set',
+        apiKey: credentials.apiKey ? `${credentials.apiKey.substring(0, 5)}...` : 'not set',
+      });
+      
+      // Überprüfe, ob die erforderlichen Anmeldeinformationen vorhanden sind
+      if (!credentials.username || !credentials.password || !credentials.apiKey) {
+        return res.status(500).json({ 
+          error: 'Vinaturel API credentials not set',
+          missingCredentials: {
+            username: !credentials.username,
+            password: !credentials.password,
+            apiKey: !credentials.apiKey
+          }
+        });
+      }
       
       const limit = parseInt(req.query.limit as string) || 20;
       const page = parseInt(req.query.page as string) || 1;

@@ -33,6 +33,11 @@ async function authenticate(credentials: VinaturelCredentials): Promise<string> 
   }
 
   try {
+    console.log('Authenticating with Vinaturel API using credentials:', {
+      username: credentials.username,
+      apiKey: credentials.apiKey ? `${credentials.apiKey.substring(0, 5)}...` : 'not set'
+    });
+    
     const response = await axios.post('https://www.vinaturel.de/api/oauth/token', {
       username: credentials.username,
       password: credentials.password,
@@ -44,6 +49,9 @@ async function authenticate(credentials: VinaturelCredentials): Promise<string> 
         'sw-access-key': credentials.apiKey
       }
     });
+
+    console.log('Authentication response status:', response.status);
+    console.log('Authentication response data:', JSON.stringify(response.data, null, 2));
 
     // Calculate token expiration (assuming token expires in 1 hour)
     const expiresAt = new Date();
@@ -57,7 +65,15 @@ async function authenticate(credentials: VinaturelCredentials): Promise<string> 
 
     return response.data.access_token;
   } catch (error) {
-    console.error('Error authenticating with Vinaturel API:', error);
+    if (axios.isAxiosError(error)) {
+      console.error('Error authenticating with Vinaturel API:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data
+      });
+    } else {
+      console.error('Error authenticating with Vinaturel API:', error);
+    }
     throw new Error('Failed to authenticate with Vinaturel API');
   }
 }
@@ -65,7 +81,9 @@ async function authenticate(credentials: VinaturelCredentials): Promise<string> 
 async function fetchWines(credentials: VinaturelCredentials, limit = 50, page = 1): Promise<VinaturelWine[]> {
   try {
     const token = await authenticate(credentials);
-
+    
+    console.log('Fetching wines with token', token ? `${token.substring(0, 10)}...` : 'not available');
+    
     const response = await axios.post('https://www.vinaturel.de/api/search/product', {
       limit,
       page,
@@ -82,6 +100,12 @@ async function fetchWines(credentials: VinaturelCredentials, limit = 50, page = 
         'Authorization': `Bearer ${token}`,
         'sw-access-key': credentials.apiKey
       }
+    });
+    
+    console.log('Wine search response status:', response.status);
+    console.log('Wine search response data structure:', {
+      total: response.data.total,
+      elementCount: response.data.elements?.length || 0
     });
 
     // Transform the response into our VinaturelWine format
@@ -103,7 +127,15 @@ async function fetchWines(credentials: VinaturelCredentials, limit = 50, page = 
       };
     });
   } catch (error) {
-    console.error('Error fetching wines from Vinaturel API:', error);
+    if (axios.isAxiosError(error)) {
+      console.error('Error fetching wines from Vinaturel API:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data
+      });
+    } else {
+      console.error('Error fetching wines from Vinaturel API:', error);
+    }
     throw new Error('Failed to fetch wines from Vinaturel API');
   }
 }
