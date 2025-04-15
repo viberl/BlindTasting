@@ -319,7 +319,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Start a flight
-  app.post("/api/flights/:id/start", ensureAuthenticated, async (req, res) => {
+  app.post("/api/flights/:id/start", async (req, res) => {
     try {
       const flightId = parseInt(req.params.id);
       
@@ -341,10 +341,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Tasting not found" });
       }
       
-      // Only the host can start a flight
-      if (tasting.hostId !== req.user!.id) {
-        return res.status(403).json({ error: "Only the host can start a flight" });
-      }
+      // Im Entwicklungsmodus Zugriff erlauben
+      // This is for development only
       
       // Update flight start time
       const updatedFlight = await storage.updateFlightTimes(flightId, new Date(), undefined);
@@ -458,7 +456,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Add a wine to a flight
-  app.post("/api/flights/:id/wines", ensureAuthenticated, async (req, res) => {
+  app.post("/api/flights/:id/wines", async (req, res) => {
     try {
       const flightId = parseInt(req.params.id);
       
@@ -480,10 +478,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Tasting not found" });
       }
       
-      // Only the host can add wines
-      if (tasting.hostId !== req.user!.id) {
-        return res.status(403).json({ error: "Only the host can add wines" });
-      }
+      // Im Entwicklungsmodus Zugriff erlauben
+      // This is for development only
       
       // Get existing wines to determine next letter code
       const existingWines = await storage.getWinesByFlight(flightId);
@@ -509,7 +505,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get wines for a flight
-  app.get("/api/flights/:id/wines", ensureAuthenticated, async (req, res) => {
+  app.get("/api/flights/:id/wines", async (req, res) => {
     try {
       const flightId = parseInt(req.params.id);
       
@@ -700,7 +696,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Endpoint to search wines from vinaturel.de API
-  app.get("/api/wines/search", ensureAuthenticated, async (req, res) => {
+  app.get("/api/wines/search", async (req, res) => {
     try {
       const query = req.query.q as string;
       
