@@ -15,14 +15,29 @@ import {
 
 // Helper function to ensure user is authenticated
 function ensureAuthenticated(req: Request, res: Response, next: Function) {
+  console.log("Checking authentication for:", req.path, "Session ID:", req.sessionID);
+  
+  // Prüfe zuerst die Standard-Passport-Authentifizierung
   if (req.isAuthenticated()) {
+    console.log("User is authenticated via passport, user ID:", (req.user as any)?.id);
     return next();
   }
+  
+  // Alternativ prüfen wir auch die Session-Variable, die wir gesetzt haben
+  if (req.session && req.session.userId) {
+    console.log("User is authenticated via session variable, user ID:", req.session.userId);
+    // Hier könnten wir auch den Benutzer aus der DB laden und req.user setzen
+    return next();
+  }
+  
   console.log("Auth check failed: User is not authenticated", { 
-    session: req.session,
-    user: req.user,
-    isAuthenticated: req.isAuthenticated()
+    sessionID: req.sessionID,
+    userInSession: !!req.session.userId,
+    hasUser: !!req.user,
+    isAuthenticated: req.isAuthenticated(),
+    cookies: req.headers.cookie
   });
+  
   res.status(401).json({ message: "Unauthorized - Sie müssen angemeldet sein" });
 }
 

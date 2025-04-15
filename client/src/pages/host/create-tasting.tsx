@@ -64,9 +64,13 @@ export default function CreateTastingPage() {
 
   const createTastingMutation = useMutation({
     mutationFn: async (data: CreateTastingFormData) => {
+      if (!user || !user.id) {
+        throw new Error("Sie müssen angemeldet sein, um eine Verkostung zu erstellen");
+      }
+      
       const requestData = {
         ...data,
-        hostId: user?.id,
+        hostId: user.id,
       };
       
       // Wenn nicht passwortgeschützt, Passwort entfernen
@@ -80,9 +84,18 @@ export default function CreateTastingPage() {
       console.log('Erstellen einer Verkostung mit:', { 
         ...requestData, 
         user: user ? 'Benutzer vorhanden' : 'Kein Benutzer',
-        userId: user?.id
+        userId: user.id
       });
       
+      // Erster API-Aufruf: Überprüfen, ob der Benutzer authentifiziert ist
+      const checkAuth = await fetch('/api/user', { credentials: 'include' });
+      console.log('Auth check Status vor Verkostungserstellung:', checkAuth.status);
+      
+      if (checkAuth.status === 401) {
+        throw new Error("Authentifizierungsfehler: Bitte melden Sie sich erneut an");
+      }
+      
+      // Mit dem bestätigten Authentifizierungsstatus fortfahren
       const res = await apiRequest("POST", "/api/tastings", requestData);
       const result = await res.json();
       console.log('Verkostungserstellung Antwort:', result);

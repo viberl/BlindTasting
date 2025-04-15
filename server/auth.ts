@@ -36,16 +36,18 @@ async function comparePasswords(supplied: string, stored: string) {
 }
 
 export function setupAuth(app: Express) {
+  // Wir verwenden eine einfache Session ohne externe Speicherung für die Entwicklung
   const sessionSettings: session.SessionOptions = {
     secret: process.env.SESSION_SECRET || "blindsip-secret-key",
-    resave: true, // Geändert von false zu true für bessere Session-Persistenz
-    saveUninitialized: true, // Geändert von false zu true für bessere Session-Persistenz
-    store: storage.sessionStore,
+    resave: true,
+    saveUninitialized: true,
+    // store: storage.sessionStore, // Entfernt für direkteren Ansatz
     cookie: {
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
       httpOnly: true,
       sameSite: 'lax',
-      secure: false // Auf false gesetzt für Entwicklung, damit Cookies über HTTP funktionieren
+      secure: false, // Auf false gesetzt für Entwicklung
+      path: '/' // Stellen Sie sicher, dass Cookies für alle Pfade gelten
     }
   };
   
