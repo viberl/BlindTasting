@@ -56,7 +56,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Vinaturel API integration for wine data
   app.get("/api/vinaturel/wines", ensureAuthenticated, async (req, res) => {
     try {
-      const { VinaturelAPI } = require('./vinaturel-api');
+      // Benutze den bereits importierten VinaturelAPI
       const credentials = {
         username: process.env.VINATUREL_USERNAME || 'verena.oleksyn@web.de',
         password: process.env.VINATUREL_PASSWORD || 'Vinaturel123',
@@ -710,8 +710,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         apiKey: process.env.VINATUREL_API_KEY || 'SWSCT5QYLV9K9CQMJ_XI1Q176W'
       };
       
-      // Dieselbe Methode wie im anderen Endpunkt verwenden
-      const { VinaturelAPI } = require('./vinaturel-api');
+      // Auf direkten Import anstelle von require verwenden
       const wines = await VinaturelAPI.fetchWines(credentials);
       // Filter wines based on query
       const filteredWines = wines.filter((wine: any) => {
