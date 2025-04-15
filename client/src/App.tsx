@@ -13,11 +13,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // Create a client
 const queryClient = new QueryClient();
 
+import TastingDetailPage from "@/pages/host/tasting-detail";
+
 function Router() {
   return (
     <Switch>
       <ProtectedRoute path="/" component={HomePage} />
       <ProtectedRoute path="/host/create-tasting" component={CreateTastingPage} />
+      <ProtectedRoute path="/host/tasting/:id" component={TastingDetailPage} />
       <Route path="/auth" component={AuthPage} />
       <Route component={NotFound} />
     </Switch>
