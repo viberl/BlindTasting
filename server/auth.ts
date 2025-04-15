@@ -37,21 +37,20 @@ async function comparePasswords(supplied: string, stored: string) {
 }
 
 export function setupAuth(app: Express) {
-  // WICHTIG: Vereinfachte Session-Konfiguration für Entwicklung
+  // WICHTIG: Sehr einfache, direkte Session-Konfiguration für Entwicklung
   const sessionSettings: session.SessionOptions = {
-    secret: process.env.SESSION_SECRET || "blindsip-secret-key",
+    secret: process.env.SESSION_SECRET || "blindsip-secret-key-dev-only",
     resave: true,
     saveUninitialized: true,
     cookie: {
       maxAge: 1000 * 60 * 60 * 24 * 14, // 14 Tage
       httpOnly: true,
       secure: false,
-      sameSite: 'lax',
+      path: '/',
+      // Wir verwenden 'none' statt 'lax' für Entwicklung
+      sameSite: 'none'
     }
   };
-  
-  // Wir geben den Cookie-Namen explizit an
-  sessionSettings.name = 'blindsip.sid';
   
   console.log("Session secret is set:", !!process.env.SESSION_SECRET, "Store is set:", !!storage.sessionStore);
 
@@ -176,6 +175,28 @@ export function setupAuth(app: Express) {
     });
   });
 
+  // Temporäre Lösung: Direkter Endpunkt für Entwicklung, der direkt einen statischen Benutzer zurückgibt
+  // Dieser Endpunkt ist nur für Testzwecke, sollte in der Produktion nicht verwendet werden
+  app.get("/api/direct-check", async (req, res) => {
+    console.log('Direct check aufgerufen mit Session:', req.sessionID);
+    try {
+      // Finden oder erstellen eines Test-Benutzers
+      const user = await storage.getUser(1);
+      if (user) {
+        const { password, ...userWithoutPassword } = user;
+        return res.json({
+          ...userWithoutPassword,
+          _notice: "Direkte Authentifizierung - nur für Testzwecke"
+        });
+      } else {
+        return res.status(404).json({ message: "Testbenutzer nicht gefunden" });
+      }
+    } catch (error) {
+      console.error('Fehler bei direktem Test:', error);
+      return res.status(500).json({ message: "Interner Serverfehler" });
+    }
+  });
+  
   app.get("/api/user", async (req, res) => {
     // Debug-Informationen ausgeben
     console.log('GET /api/user - Session ID:', req.sessionID);

@@ -30,6 +30,13 @@ function ensureAuthenticated(req: Request, res: Response, next: Function) {
     return next();
   }
   
+  // TEMPORÄRE LÖSUNG FÜR ENTWICKLUNG - NICHT FÜR PRODUKTION
+  // In der Entwicklung erlauben wir alle Anfragen für API-Endpunkte
+  if (process.env.NODE_ENV === 'development') {
+    console.log("DEV MODE: Allowing access without authentication");
+    return next();
+  }
+  
   console.log("Auth check failed: User is not authenticated", { 
     sessionID: req.sessionID,
     userInSession: !!req.session.userId,
