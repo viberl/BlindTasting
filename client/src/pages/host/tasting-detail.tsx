@@ -52,12 +52,20 @@ export default function TastingDetailPage() {
   // Lade Tastings-Details
   const { data: tasting, isLoading: isTastingLoading, error: tastingError } = useQuery<Tasting>({
     queryKey: [`/api/tastings/${tastingId}`],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/tastings/${tastingId}`);
+      return res.json();
+    },
     enabled: !isNaN(tastingId),
   });
 
   // Lade Flights für diese Verkostung
   const { data: flights, isLoading: isFlightsLoading } = useQuery<Flight[]>({
     queryKey: [`/api/tastings/${tastingId}/flights`],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/tastings/${tastingId}/flights`);
+      return res.json();
+    },
     enabled: !isNaN(tastingId) && !!tasting,
   });
 
