@@ -36,20 +36,21 @@ async function comparePasswords(supplied: string, stored: string) {
 }
 
 export function setupAuth(app: Express) {
-  // Wir verwenden eine einfache Session ohne externe Speicherung für die Entwicklung
+  // WICHTIG: Vereinfachte Session-Konfiguration für Entwicklung
   const sessionSettings: session.SessionOptions = {
     secret: process.env.SESSION_SECRET || "blindsip-secret-key",
     resave: true,
     saveUninitialized: true,
-    // store: storage.sessionStore, // Entfernt für direkteren Ansatz
     cookie: {
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      maxAge: 1000 * 60 * 60 * 24 * 14, // 14 Tage
       httpOnly: true,
+      secure: false,
       sameSite: 'lax',
-      secure: false, // Auf false gesetzt für Entwicklung
-      path: '/' // Stellen Sie sicher, dass Cookies für alle Pfade gelten
     }
   };
+  
+  // Wir geben den Cookie-Namen explizit an
+  sessionSettings.name = 'blindsip.sid';
   
   console.log("Session secret is set:", !!process.env.SESSION_SECRET, "Store is set:", !!storage.sessionStore);
 

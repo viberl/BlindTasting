@@ -25,6 +25,9 @@ function Router() {
 }
 
 function App() {
+  // Log für Debugging-Zwecke
+  console.log("App wird geladen. API-Basis-URL:", window.location.origin);
+  
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
