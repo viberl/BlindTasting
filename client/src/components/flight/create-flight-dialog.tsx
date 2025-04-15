@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
@@ -16,20 +15,18 @@ import {
 } from "@/components/ui/dialog";
 import {
   Form,
-  FormControl,
   FormField,
   FormItem,
   FormLabel,
+  FormControl,
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 
-const flightSchema = z.object({
-  name: z.string().min(1, "Name ist erforderlich"),
-  timeLimit: z.coerce.number().min(1, "Zeit muss mindestens 1 Minute sein").max(180, "Zeit darf maximal 180 Minuten sein"),
-});
+// Flight ist einfach eine Runde ohne zusätzliche Eigenschaften
+const flightSchema = z.object({});
 
 type FlightFormData = z.infer<typeof flightSchema>;
 
@@ -45,10 +42,7 @@ export default function CreateFlightDialog({ tastingId, open, onOpenChange }: Cr
   
   const form = useForm<FlightFormData>({
     resolver: zodResolver(flightSchema),
-    defaultValues: {
-      name: "",
-      timeLimit: 30,
-    },
+    defaultValues: {},
   });
 
   const createFlightMutation = useMutation({
@@ -89,33 +83,10 @@ export default function CreateFlightDialog({ tastingId, open, onOpenChange }: Cr
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
-              name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Name des Flights</FormLabel>
-                  <FormControl>
-                    <Input placeholder="z.B. Rotweine aus Burgund" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="timeLimit"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Zeitlimit (Minuten)</FormLabel>
-                  <FormControl>
-                    <Input type="number" min={1} max={180} {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <p className="text-center mb-4">
+              Ein Flight ist eine Runde von Weinen, die gleichzeitig verkostet werden. 
+              Sie können nach dem Erstellen des Flights Weine hinzufügen.
+            </p>
 
             <DialogFooter className="gap-2 sm:gap-0">
               <Button

@@ -268,15 +268,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Im Entwicklungsmodus Zugriff erlauben
       // This is for development only
       
-      // Get existing flights to determine next order index
+      // Get existing flights to determine next order index and flight number
       const existingFlights = await storage.getFlightsByTasting(tastingId);
       const orderIndex = existingFlights.length;
+      const flightNumber = orderIndex + 1;
       
-      // Validate flight data
+      // Automatisch Namen und Standardwerte generieren 
       const flightData = insertFlightSchema.parse({
-        ...req.body,
         tastingId,
-        orderIndex
+        orderIndex,
+        name: `Runde ${flightNumber}`,
+        timeLimit: 1800 // 30 minutes default
       });
       
       const flight = await storage.createFlight(flightData);
