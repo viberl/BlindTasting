@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { setupAuth } from "./auth";
 import { z } from "zod";
 import axios from "axios";
+import { VinaturelAPI } from "./vinaturel-api";
 import {
   insertTastingSchema,
   insertScoringRuleSchema,
@@ -277,7 +278,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const flightData = insertFlightSchema.parse({
         tastingId,
         orderIndex,
-        name: `Runde ${flightNumber}`,
+        name: `Flight ${flightNumber}`,
         timeLimit: 1800 // 30 minutes default
       });
       
@@ -703,13 +704,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Use vinaturel API
-      const { VinaturelAPI } = require('./vinaturel-api');
       const credentials = {
         username: process.env.VINATUREL_USERNAME || 'verena.oleksyn@web.de',
         password: process.env.VINATUREL_PASSWORD || 'Vinaturel123',
         apiKey: process.env.VINATUREL_API_KEY || 'SWSCT5QYLV9K9CQMJ_XI1Q176W'
       };
       
+      // Dieselbe Methode wie im anderen Endpunkt verwenden
+      const { VinaturelAPI } = require('./vinaturel-api');
       const wines = await VinaturelAPI.fetchWines(credentials);
       // Filter wines based on query
       const filteredWines = wines.filter((wine: any) => {
