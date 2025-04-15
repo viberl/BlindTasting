@@ -8,6 +8,9 @@ import { participants, type Participant, type InsertParticipant } from "@shared/
 import { guesses, type Guess, type InsertGuess } from "@shared/schema";
 import session from "express-session";
 import createMemoryStore from "memorystore";
+import connectPgSimple from "connect-pg-simple";
+import { db } from "./db";
+import { eq, and, desc, or, inArray } from "drizzle-orm";
 
 const MemoryStore = createMemoryStore(session);
 
@@ -59,7 +62,7 @@ export interface IStorage {
   updateGuessScore(id: number, score: number): Promise<Guess>;
   
   // Session store
-  sessionStore: session.SessionStore;
+  sessionStore: any; // Wir verwenden any statt session.SessionStore für Typsicherheit
 }
 
 export class MemStorage implements IStorage {
@@ -72,7 +75,7 @@ export class MemStorage implements IStorage {
   private participants: Map<number, Participant>;
   private guesses: Map<number, Guess>;
 
-  sessionStore: session.SessionStore;
+  sessionStore: any;
   
   private userIdCounter: number = 1;
   private tastingIdCounter: number = 1;
@@ -374,4 +377,320 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+// DatabaseStorage Implementierung
+export class DatabaseStorage implements IStorage {
+  sessionStore: any;
+
+  constructor() {
+    const PostgresSessionStore = connectPgSimple(session);
+    this.sessionStore = new PostgresSessionStore({
+      conObject: {
+        connectionString: process.env.DATABASE_URL,
+      },
+      createTableIfMissing: true
+    });
+  }
+
+  // User methods
+  async getUser(id: number): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.id, id));
+    return result[0];
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.email, email.toLowerCase()));
+    return result[0];
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const result = await db.insert(users).values(insertUser).returning();
+    return result[0];
+  }
+
+  // Tasting methods
+  async createTasting(insertTasting: InsertTasting): Promise<Tasting> {
+    const result = await db.insert(tastings).values(insertTasting).returning();
+    return result[0];
+  }
+
+  async getTasting(id: number): Promise<Tasting | undefined> {
+    const result = await db.select().from(tastings).where(eq(tastings.id, id));
+    return result[0];
+  }
+
+  async getAllTastings(): Promise<Tasting[]> {
+    return await db.select().from(tastings);
+  }
+
+  async getPublicTastings(): Promise<Tasting[]> {
+    return await db.select().from(tastings).where(
+      and(
+        eq(tastings.isPublic, true),
+        eq(tastings.status, "active")
+      )
+    );
+  }
+
+  async getUserTastings(userId: number): Promise<Tasting[]> {
+    // Get user email
+    const user = await this.getUser(userId);
+    if (!user) {
+      return [];
+    }
+
+    // Get tasting IDs where user is invited
+    const inviteResults = await db.select().from(tastingInvitees).where(
+      eq(tastingInvitees.email, user.email.toLowerCase())
+    );
+    const invitedTastingIds = inviteResults.map(invite => invite.tastingId);
+
+    // Get public active tastings and tastings where user is invited
+    if (invitedTastingIds.length > 0) {
+      return await db.select().from(tastings).where(
+        or(
+          and(
+            eq(tastings.isPublic, true),
+            eq(tastings.status, "active")
+          ),
+          inArray(tastings.id, invitedTastingIds)
+        )
+      );
+    } else {
+      return await db.select().from(tastings).where(
+        and(
+          eq(tastings.isPublic, true),
+          eq(tastings.status, "active")
+        )
+      );
+    }
+  }
+
+  async getHostedTastings(hostId: number): Promise<Tasting[]> {
+    return await db.select().from(tastings).where(eq(tastings.hostId, hostId));
+  }
+
+  async updateTastingStatus(id: number, status: string): Promise<Tasting> {
+    const updateValues: Partial<Tasting> = { status };
+    
+    if (status === "completed") {
+      updateValues.completedAt = new Date();
+    }
+    
+    const result = await db
+      .update(tastings)
+      .set(updateValues)
+      .where(eq(tastings.id, id))
+      .returning();
+    
+    return result[0];
+  }
+
+  // Tasting Invitees
+  async addTastingInvitee(invitee: InsertTastingInvitee): Promise<TastingInvitee> {
+    try {
+      const result = await db.insert(tastingInvitees).values(invitee).returning();
+      return result[0];
+    } catch (error) {
+      // If there's a duplicate, just return the invitee
+      return invitee;
+    }
+  }
+
+  async getTastingInvitees(tastingId: number): Promise<TastingInvitee[]> {
+    return await db
+      .select()
+      .from(tastingInvitees)
+      .where(eq(tastingInvitees.tastingId, tastingId));
+  }
+
+  // Scoring Rules
+  async createScoringRule(rule: InsertScoringRule): Promise<ScoringRule> {
+    const result = await db.insert(scoringRules).values(rule).returning();
+    return result[0];
+  }
+
+  async getScoringRule(tastingId: number): Promise<ScoringRule | undefined> {
+    const result = await db
+      .select()
+      .from(scoringRules)
+      .where(eq(scoringRules.tastingId, tastingId));
+    return result[0];
+  }
+
+  // Flight methods
+  async createFlight(flight: InsertFlight): Promise<Flight> {
+    const result = await db.insert(flights).values(flight).returning();
+    return result[0];
+  }
+
+  async getFlightsByTasting(tastingId: number): Promise<Flight[]> {
+    return await db
+      .select()
+      .from(flights)
+      .where(eq(flights.tastingId, tastingId))
+      .orderBy(flights.orderIndex);
+  }
+
+  async updateFlightTimes(id: number, startedAt?: Date, completedAt?: Date): Promise<Flight> {
+    const flight = await db.select().from(flights).where(eq(flights.id, id)).then(res => res[0]);
+    
+    if (!flight) {
+      throw new Error(`Flight with id ${id} not found`);
+    }
+    
+    const updateValues: Partial<Flight> = {};
+    
+    if (startedAt !== undefined) {
+      updateValues.startedAt = startedAt;
+    }
+    
+    if (completedAt !== undefined) {
+      updateValues.completedAt = completedAt;
+    }
+    
+    const result = await db
+      .update(flights)
+      .set(updateValues)
+      .where(eq(flights.id, id))
+      .returning();
+    
+    return result[0];
+  }
+
+  // Wine methods
+  async createWine(wine: InsertWine): Promise<Wine> {
+    const result = await db.insert(wines).values(wine).returning();
+    return result[0];
+  }
+
+  async getWinesByFlight(flightId: number): Promise<Wine[]> {
+    return await db
+      .select()
+      .from(wines)
+      .where(eq(wines.flightId, flightId))
+      .orderBy(wines.letterCode);
+  }
+
+  async getWineById(id: number): Promise<Wine | undefined> {
+    const result = await db.select().from(wines).where(eq(wines.id, id));
+    return result[0];
+  }
+
+  // Participant methods
+  async createParticipant(participant: InsertParticipant): Promise<Participant> {
+    // Check if participant already exists
+    const existingParticipant = await this.getParticipant(
+      participant.tastingId,
+      participant.userId
+    );
+    
+    if (existingParticipant) {
+      return existingParticipant;
+    }
+    
+    const result = await db.insert(participants).values({
+      ...participant,
+      joinedAt: new Date(),
+      score: 0
+    }).returning();
+    
+    return result[0];
+  }
+
+  async getParticipantsByTasting(tastingId: number): Promise<Participant[]> {
+    return await db
+      .select()
+      .from(participants)
+      .where(eq(participants.tastingId, tastingId))
+      .orderBy(desc(participants.score));
+  }
+
+  async getParticipant(tastingId: number, userId: number): Promise<Participant | undefined> {
+    const result = await db
+      .select()
+      .from(participants)
+      .where(
+        and(
+          eq(participants.tastingId, tastingId),
+          eq(participants.userId, userId)
+        )
+      );
+    
+    return result[0];
+  }
+
+  async updateParticipantScore(id: number, score: number): Promise<Participant> {
+    const result = await db
+      .update(participants)
+      .set({ score })
+      .where(eq(participants.id, id))
+      .returning();
+    
+    return result[0];
+  }
+
+  // Guess methods
+  async createGuess(insertGuess: InsertGuess): Promise<Guess> {
+    // Check if a guess already exists for this participant and wine
+    const existingGuess = await this.getGuessByWine(
+      insertGuess.participantId,
+      insertGuess.wineId
+    );
+    
+    // If exists, update it
+    if (existingGuess) {
+      const result = await db
+        .update(guesses)
+        .set({
+          ...insertGuess,
+          submittedAt: new Date()
+        })
+        .where(eq(guesses.id, existingGuess.id))
+        .returning();
+      
+      return result[0];
+    }
+    
+    // Otherwise create new
+    const result = await db.insert(guesses).values({
+      ...insertGuess,
+      score: 0,
+      submittedAt: new Date()
+    }).returning();
+    
+    return result[0];
+  }
+
+  async getGuessesByParticipant(participantId: number): Promise<Guess[]> {
+    return await db
+      .select()
+      .from(guesses)
+      .where(eq(guesses.participantId, participantId));
+  }
+
+  async getGuessByWine(participantId: number, wineId: number): Promise<Guess | undefined> {
+    const result = await db
+      .select()
+      .from(guesses)
+      .where(
+        and(
+          eq(guesses.participantId, participantId),
+          eq(guesses.wineId, wineId)
+        )
+      );
+    
+    return result[0];
+  }
+
+  async updateGuessScore(id: number, score: number): Promise<Guess> {
+    const result = await db
+      .update(guesses)
+      .set({ score })
+      .where(eq(guesses.id, id))
+      .returning();
+    
+    return result[0];
+  }
+}
+
+export const storage = new DatabaseStorage();
