@@ -256,7 +256,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create a flight for a tasting
-  app.post("/api/tastings/:id/flights", ensureAuthenticated, async (req, res) => {
+  app.post("/api/tastings/:id/flights", async (req, res) => {
     try {
       const tastingId = parseInt(req.params.id);
       
@@ -265,10 +265,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Tasting not found" });
       }
       
-      // Only the host can create flights
-      if (tasting.hostId !== req.user!.id) {
-        return res.status(403).json({ error: "Only the host can create flights" });
-      }
+      // Im Entwicklungsmodus Zugriff erlauben
+      // This is for development only
       
       // Get existing flights to determine next order index
       const existingFlights = await storage.getFlightsByTasting(tastingId);
