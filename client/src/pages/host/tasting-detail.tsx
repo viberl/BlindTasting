@@ -1,18 +1,86 @@
 import { useParams } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Loader2, Wine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { toast } from "@/hooks/use-toast";
+import { toast, useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useState } from "react";
+
+// Dialoge für Erstellung von Flights und Hinzufügen von Weinen
+import CreateFlightDialog from "@/components/flight/create-flight-dialog";
+import AddWineDialog from "@/components/wine/add-wine-dialog";
 
 export default function TastingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const tastingId = parseInt(id);
   const { user } = useAuth();
+  const { toast } = useToast();
+  
+  // State für Dialoge
+  const [createFlightOpen, setCreateFlightOpen] = useState(false);
+  const [addWineDialogOpen, setAddWineDialogOpen] = useState(false);
+  const [selectedFlightId, setSelectedFlightId] = useState<number | null>(null);
+  
+  // Mutationen für Flight-Aktionen
+  const startFlightMutation = useMutation({
+    mutationFn: async (flightId: number) => {
+      const response = await apiRequest("POST", `/api/flights/${flightId}/start`);
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Flight gestartet",
+        description: "Der Flight wurde erfolgreich gestartet.",
+      });
+      queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Fehler",
+        description: `Der Flight konnte nicht gestartet werden: ${error.message}`,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const completeFlightMutation = useMutation({
+    mutationFn: async (flightId: number) => {
+      const response = await apiRequest("POST", `/api/flights/${flightId}/complete`);
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Flight abgeschlossen",
+        description: "Der Flight wurde erfolgreich abgeschlossen.",
+      });
+      queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Fehler",
+        description: `Der Flight konnte nicht abgeschlossen werden: ${error.message}`,
+        variant: "destructive",
+      });
+    },
+  });
+  
+  // Handler-Funktionen
+  const handleAddWine = (flightId: number) => {
+    setSelectedFlightId(flightId);
+    setAddWineDialogOpen(true);
+  };
+  
+  const handleStartFlight = (flightId: number) => {
+    startFlightMutation.mutate(flightId);
+  };
+  
+  const handleCompleteFlight = (flightId: number) => {
+    completeFlightMutation.mutate(flightId);
+  };
 
   // Definiere Typen für unsere Daten
   interface Tasting {
@@ -249,7 +317,7 @@ export default function TastingDetailPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => {/* Funktion zum Hinzufügen von Weinen */}}
+                          onClick={() => handleAddWine(flight.id)}
                           className="w-full"
                         >
                           Wein hinzufügen
@@ -257,7 +325,7 @@ export default function TastingDetailPage() {
                         {!flight.startedAt && (
                           <Button
                             size="sm"
-                            onClick={() => {/* Funktion zum Starten des Flights */}}
+                            onClick={() => handleStartFlight(flight.id)}
                             className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
                             disabled={tasting.status !== 'active'}
                           >
@@ -267,7 +335,7 @@ export default function TastingDetailPage() {
                         {flight.startedAt && !flight.completedAt && (
                           <Button
                             size="sm"
-                            onClick={() => {/* Funktion zum Beenden des Flights */}}
+                            onClick={() => handleCompleteFlight(flight.id)}
                             className="w-full bg-blue-600 hover:bg-blue-700"
                           >
                             Flight abschließen
@@ -288,7 +356,7 @@ export default function TastingDetailPage() {
                 {isHost && tasting.status === 'draft' && (
                   <Button 
                     className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
-                    onClick={() => {/* Funktion zum Erstellen eines Flights */}}
+                    onClick={() => setCreateFlightOpen(true)}
                   >
                     Neuen Flight erstellen
                   </Button>
@@ -300,7 +368,7 @@ export default function TastingDetailPage() {
           {isHost && tasting.status === 'draft' && (
             <Button
               className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
-              onClick={() => {/* Funktion zum Erstellen eines Flights */}}
+              onClick={() => setCreateFlightOpen(true)}
             >
               Neuen Flight erstellen
             </Button>
@@ -366,6 +434,21 @@ export default function TastingDetailPage() {
           </TabsContent>
         )}
       </Tabs>
+      
+      {/* Dialoge */}
+      <CreateFlightDialog 
+        tastingId={tastingId}
+        open={createFlightOpen}
+        onOpenChange={setCreateFlightOpen}
+      />
+      
+      {selectedFlightId && (
+        <AddWineDialog 
+          flightId={selectedFlightId}
+          open={addWineDialogOpen}
+          onOpenChange={setAddWineDialogOpen}
+        />
+      )}
     </div>
   );
 }
