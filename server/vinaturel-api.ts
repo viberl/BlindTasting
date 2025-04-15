@@ -38,15 +38,16 @@ async function authenticate(credentials: VinaturelCredentials): Promise<string> 
       apiKey: credentials.apiKey ? `${credentials.apiKey.substring(0, 5)}...` : 'not set'
     });
     
-    const response = await axios.post('https://vinaturel.de/store-api/oauth/token', {
+    const response = await axios.post('https://vinaturel.de/store-api/auth/token', {
       username: credentials.username,
       password: credentials.password,
       grant_type: 'password',
-      client_id: 'administration'
+      client_id: 'frontend'
     }, {
       headers: {
         'Content-Type': 'application/json',
-        'sw-access-key': credentials.apiKey
+        'sw-access-key': credentials.apiKey,
+        'sw-context-token': credentials.apiKey
       }
     });
 
@@ -84,7 +85,7 @@ async function fetchWines(credentials: VinaturelCredentials, limit = 50, page = 
     
     console.log('Fetching wines with token', token ? `${token.substring(0, 10)}...` : 'not available');
     
-    const response = await axios.post('https://vinaturel.de/store-api/product', {
+    const response = await axios.post('https://vinaturel.de/store-api/product-listing/1', {
       limit,
       page,
       filter: [
