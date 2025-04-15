@@ -45,18 +45,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         setIsLoading(true);
         console.log('Fetching user data...');
+        
+        // Direkt nach der Session-ID im Cookie suchen (nur für Debug-Zwecke)
+        console.log('Vorhandene Cookies:', document.cookie);
+        
         const response = await fetch('/api/user', {
           credentials: 'include',
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          }
         });
+        
         console.log('User fetch response:', response.status, response.statusText);
+        
+        // Versuchen, Header zu überprüfen
+        try {
+          const headerInfo = Array.from(response.headers.entries())
+            .filter(([key]) => ['set-cookie', 'content-type'].includes(key.toLowerCase()))
+            .map(([key, value]) => `${key}: ${value}`);
+          
+          if (headerInfo.length > 0) {
+            console.log('Response Headers:', headerInfo);
+          }
+        } catch (headerErr) {
+          console.log('Konnte Header nicht lesen:', headerErr);
+        }
         
         if (response.ok) {
           const userData = await response.json();
+          console.log('User data received:', userData);
           setUser(userData);
         } else {
           setUser(null);
         }
       } catch (err) {
+        console.error('Failed to fetch user:', err);
         setError(err as Error);
         setUser(null);
       } finally {

@@ -11,6 +11,7 @@ import { User as SelectUser } from "@shared/schema";
 declare module 'express-session' {
   interface SessionData {
     userId?: number;
+    authenticated?: boolean;
   }
 }
 
@@ -106,19 +107,28 @@ export function setupAuth(app: Express) {
         password: hashedPassword,
       });
 
-      req.login(user, (err) => {
-        if (err) return next(err);
+      // Manuelles Login statt Passport
+      // Setzen Sie die User-ID in die Session
+      req.session.userId = user.id; 
+      req.session.authenticated = true;
+      console.log('Registrierung erfolgreich. Session-ID:', req.sessionID, 'User ID:', user.id);
+      
+      // Speichern Sie die Session, bevor Sie antworten
+      req.session.save((err) => {
+        if (err) {
+          console.error('Session konnte nicht gespeichert werden:', err);
+          return next(err);
+        }
         
-        // Sitzungsvariable setzen
-        req.session.userId = user.id;
-        console.log('Registrierung erfolgreich. Session-ID:', req.sessionID, 'User ID:', user.id);
-        
-        // Session speichern, bevor wir antworten
-        req.session.save((err) => {
-          if (err) {
-            console.error('Session konnte nicht gespeichert werden:', err);
-            return next(err);
+        // Stellen Sie sicher, dass Passport den Benutzer kennt
+        req.login(user, (loginErr) => {
+          if (loginErr) {
+            console.error('Passport login fehlgeschlagen:', loginErr);
+            return next(loginErr);
           }
+          
+          // Stelle sicher, dass alle Daten vor der Antwort geschrieben werden
+          console.log('Session nach Speichern:', req.session);
           
           // Don't send the password back to the client
           const { password, ...userWithoutPassword } = user;
@@ -166,13 +176,39 @@ export function setupAuth(app: Express) {
     });
   });
 
-  app.get("/api/user", (req, res) => {
-    if (!req.isAuthenticated()) {
-      return res.status(401).json({ message: "Nicht authentifiziert" });
+  app.get("/api/user", async (req, res) => {
+    // Debug-Informationen ausgeben
+    console.log('GET /api/user - Session ID:', req.sessionID);
+    console.log('Session Info:', {
+      userId: req.session.userId,
+      authenticated: req.session.authenticated,
+      isAuthenticated: req.isAuthenticated()
+    });
+    
+    // Wenn wir eine userId in der Session haben, versuchen wir den Benutzer zu finden
+    // unabhängig vom Passport-Status
+    if (req.session.userId) {
+      try {
+        const user = await storage.getUser(req.session.userId);
+        
+        if (user) {
+          console.log('Benutzer aus Session-UserId gefunden:', user.id);
+          const { password, ...userWithoutPassword } = user;
+          return res.json(userWithoutPassword);
+        }
+      } catch (error) {
+        console.error('Fehler beim Abrufen des Benutzers aus der Session:', error);
+      }
     }
     
-    // Don't send the password back to the client
-    const { password, ...userWithoutPassword } = req.user as SelectUser;
-    res.json(userWithoutPassword);
+    // Passport Authentifizierung prüfen
+    if (req.isAuthenticated()) {
+      console.log('Benutzer ist über Passport authentifiziert');
+      const { password, ...userWithoutPassword } = req.user as SelectUser;
+      return res.json(userWithoutPassword);
+    }
+    
+    // Wenn keine Authentifizierung vorliegt, 401 zurückgeben
+    return res.status(401).json({ message: "Nicht authentifiziert" });
   });
 }
