@@ -1,6 +1,6 @@
 import { useParams } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Loader2, Wine, Clock, AlarmClock } from "lucide-react";
+import { Loader2, Wine, Clock, AlarmClock, X, Users, User, Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast, useToast } from "@/hooks/use-toast";
@@ -195,6 +195,31 @@ export default function TastingDetailPage() {
   const handleSetTimer = (flightId: number) => {
     setSelectedFlightId(flightId);
     setSetTimerDialogOpen(true);
+  };
+  
+  // Punktesystem-Handler
+  const handlePointsChange = (field: string, value: number) => {
+    setPointsConfiguration(prev => ({
+      ...prev,
+      [field]: value
+    }));
+    
+    // Hier würde im fertigen System die API aufgerufen werden, um die Punkte-Konfiguration zu speichern
+    toast({
+      title: "Punktesystem aktualisiert",
+      description: `Punkte für ${field} auf ${value} gesetzt.`,
+    });
+  };
+  
+  // Einstellungen-Handler
+  const handleLeaderboardVisibilityChange = (value: number) => {
+    setLeaderboardVisibility(value);
+    
+    // Hier würde im fertigen System die API aufgerufen werden, um die Einstellung zu speichern
+    toast({
+      title: "Einstellung gespeichert",
+      description: `Es werden nun die Top ${value} Platzierungen öffentlich angezeigt.`,
+    });
   };
 
   // Statusänderung der Verkostung
@@ -456,16 +481,89 @@ export default function TastingDetailPage() {
 
         <TabsContent value="participants">
           <Card>
-            <CardHeader>
-              <CardTitle>Teilnehmer</CardTitle>
-              <CardDescription>
-                Teilnehmer dieser Verkostung und deren Punktestand
-              </CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center">
+                  <Users className="h-5 w-5 mr-2 text-[#4C0519]" />
+                  Teilnehmer
+                </CardTitle>
+                <CardDescription>
+                  Teilnehmer dieser Verkostung und deren Punktestand
+                </CardDescription>
+              </div>
+              {isHost && tasting.status !== 'completed' && (
+                <Badge variant="outline" className="ml-2">
+                  {/* Dies würde dynamisch sein */}
+                  3 Teilnehmer
+                </Badge>
+              )}
             </CardHeader>
             <CardContent>
-              <p className="text-center text-gray-500 my-8">
-                Keine Teilnehmer für diese Verkostung.
-              </p>
+              {/* Mock-Daten für die UI-Vorschau */}
+              <div className="space-y-4">
+                {/* Teilnehmer-Liste */}
+                <div className="rounded-md border">
+                  <div className="bg-gray-50 p-3 flex justify-between items-center font-medium text-sm">
+                    <div className="flex items-center">
+                      <User className="h-4 w-4 mr-2 text-gray-500" />
+                      <span>Name</span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center">
+                        <Trophy className="h-4 w-4 mr-2 text-gray-500" />
+                        <span>Punkte</span>
+                      </div>
+                      {isHost && (
+                        <span className="text-gray-500">Aktionen</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="divide-y">
+                    {[
+                      { id: 1, name: "Max Mustermann", company: "Weingut A", score: 18 },
+                      { id: 2, name: "Anna Schmidt", company: "Weinhandlung B", score: 15 },
+                      { id: 3, name: "Thomas Müller", company: "Privat", score: 12 }
+                    ].map((participant) => (
+                      <div key={participant.id} className="p-4 flex justify-between items-center">
+                        <div>
+                          <p className="font-medium">{participant.name}</p>
+                          <p className="text-sm text-gray-500">{participant.company}</p>
+                        </div>
+                        <div className="flex items-center gap-6">
+                          <div className="w-16 text-right">
+                            <span className="font-bold">{participant.score}</span>
+                            <span className="text-gray-500 text-sm ml-1">Pkt.</span>
+                          </div>
+                          {isHost && (
+                            <Button variant="ghost" size="icon" className="text-red-500 hover:text-red-700" title="Teilnehmer entfernen">
+                              <X className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Hinweis, wenn keine Teilnehmer vorhanden sind */}
+                {false && (
+                  <p className="text-center text-gray-500 my-8">
+                    Keine Teilnehmer für diese Verkostung.
+                  </p>
+                )}
+                
+                {tasting.status === 'completed' && (
+                  <div className="bg-gray-50 p-4 rounded-md border">
+                    <h3 className="font-medium flex items-center">
+                      <Trophy className="h-5 w-5 mr-2 text-amber-500" />
+                      Endergebnis
+                    </h3>
+                    <p className="text-sm text-gray-500 mt-2">
+                      Die Verkostung ist abgeschlossen. Die endgültigen Platzierungen werden oben angezeigt.
+                    </p>
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -475,20 +573,120 @@ export default function TastingDetailPage() {
             <CardHeader>
               <CardTitle>Punktesystem</CardTitle>
               <CardDescription>
-                Punkteregeln für diese Verkostung
+                Legen Sie fest, wie viele Punkte für korrekt identifizierte Weinmerkmale vergeben werden (0-5 Punkte)
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {isHost && tasting.status === 'draft' ? (
-                <Button 
-                  className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
-                  onClick={() => {/* Funktion zum Festlegen des Punktesystems */}}
-                >
-                  Punktesystem festlegen
-                </Button>
+              {isHost ? (
+                <div className="space-y-6">
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Produzent:</label>
+                        <div className="flex items-center space-x-2">
+                          {[0, 1, 2, 3, 4, 5].map((value) => (
+                            <button
+                              key={value}
+                              className={`w-10 h-10 rounded-full ${
+                                pointsConfiguration.producer === value 
+                                  ? 'bg-[#4C0519] text-white' 
+                                  : 'bg-gray-100 hover:bg-gray-200'
+                              }`}
+                              onClick={() => handlePointsChange('producer', value)}
+                            >
+                              {value}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Name:</label>
+                        <div className="flex items-center space-x-2">
+                          {[0, 1, 2, 3, 4, 5].map((value) => (
+                            <button
+                              key={value}
+                              className={`w-10 h-10 rounded-full ${
+                                pointsConfiguration.name === value 
+                                  ? 'bg-[#4C0519] text-white' 
+                                  : 'bg-gray-100 hover:bg-gray-200'
+                              }`}
+                              onClick={() => handlePointsChange('name', value)}
+                            >
+                              {value}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Jahrgang:</label>
+                        <div className="flex items-center space-x-2">
+                          {[0, 1, 2, 3, 4, 5].map((value) => (
+                            <button
+                              key={value}
+                              className={`w-10 h-10 rounded-full ${
+                                pointsConfiguration.vintage === value 
+                                  ? 'bg-[#4C0519] text-white' 
+                                  : 'bg-gray-100 hover:bg-gray-200'
+                              }`}
+                              onClick={() => handlePointsChange('vintage', value)}
+                            >
+                              {value}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Land:</label>
+                        <div className="flex items-center space-x-2">
+                          {[0, 1, 2, 3, 4, 5].map((value) => (
+                            <button
+                              key={value}
+                              className={`w-10 h-10 rounded-full ${
+                                pointsConfiguration.country === value 
+                                  ? 'bg-[#4C0519] text-white' 
+                                  : 'bg-gray-100 hover:bg-gray-200'
+                              }`}
+                              onClick={() => handlePointsChange('country', value)}
+                            >
+                              {value}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Region:</label>
+                        <div className="flex items-center space-x-2">
+                          {[0, 1, 2, 3, 4, 5].map((value) => (
+                            <button
+                              key={value}
+                              className={`w-10 h-10 rounded-full ${
+                                pointsConfiguration.region === value 
+                                  ? 'bg-[#4C0519] text-white' 
+                                  : 'bg-gray-100 hover:bg-gray-200'
+                              }`}
+                              onClick={() => handlePointsChange('region', value)}
+                            >
+                              {value}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="pt-4 border-t">
+                      <div className="text-lg font-medium">Maximale Punktzahl pro Wein: {
+                        Object.values(pointsConfiguration).reduce((sum, value) => sum + value, 0)
+                      }</div>
+                    </div>
+                  </div>
+                </div>
               ) : (
                 <p className="text-center text-gray-500 my-8">
-                  Kein Punktesystem festgelegt.
+                  Punktesystem wird vom Host festgelegt.
                 </p>
               )}
             </CardContent>
@@ -501,13 +699,67 @@ export default function TastingDetailPage() {
               <CardHeader>
                 <CardTitle>Einstellungen</CardTitle>
                 <CardDescription>
-                  Einstellungen für diese Verkostung
+                  Konfigurieren Sie allgemeine Einstellungen für diese Verkostung
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <p className="text-center text-gray-500 my-8">
-                  Diese Funktion ist noch in Entwicklung.
-                </p>
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-lg font-medium mb-2">Leaderboard-Anzeige</h3>
+                    <p className="text-sm text-gray-500 mb-4">
+                      Legen Sie fest, wie viele Teilnehmer auf dem öffentlichen Leaderboard angezeigt werden sollen. 
+                      Nur der Host kann alle Platzierungen sehen.
+                    </p>
+                    
+                    <div className="space-y-4">
+                      <div className="flex flex-col space-y-2">
+                        <label className="text-sm font-medium">
+                          Anzahl der angezeigten Platzierungen: <span className="font-bold">{leaderboardVisibility}</span>
+                        </label>
+                        <input 
+                          type="range" 
+                          min="1" 
+                          max="10" 
+                          value={leaderboardVisibility}
+                          onChange={(e) => handleLeaderboardVisibilityChange(parseInt(e.target.value))}
+                          className="w-full accent-[#4C0519]"
+                        />
+                        <div className="flex justify-between text-xs text-gray-500">
+                          <span>1</span>
+                          <span>5</span>
+                          <span>10</span>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-gray-50 p-4 rounded border">
+                        <h4 className="font-medium mb-2">Vorschau:</h4>
+                        <div className="space-y-2">
+                          {Array.from({length: leaderboardVisibility}).map((_, index) => (
+                            <div key={index} className="flex justify-between items-center p-2 bg-white rounded">
+                              <div className="flex items-center">
+                                <div className={`w-6 h-6 rounded-full flex items-center justify-center mr-2 ${
+                                  index === 0 ? 'bg-yellow-500' : 
+                                  index === 1 ? 'bg-gray-400' : 
+                                  index === 2 ? 'bg-amber-700' : 'bg-[#4C0519]'
+                                } text-white text-xs font-bold`}>
+                                  {index + 1}
+                                </div>
+                                <span className="font-medium">Teilnehmer {index + 1}</span>
+                              </div>
+                              <span className="text-sm font-bold">{(20 - index * 2)} Punkte</span>
+                            </div>
+                          ))}
+                          
+                          {leaderboardVisibility < 5 && (
+                            <div className="text-center text-gray-500 text-sm py-2 border-t">
+                              Weitere Platzierungen sind nur für den Host sichtbar
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
