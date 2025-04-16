@@ -562,15 +562,15 @@ export default function TastingDetailPage() {
                         <span>Punkte</span>
                       </div>
                       {isHost && (
-                        <span className="text-gray-500">Aktionen</span>
+                        <span className="text-gray-500">Entfernen</span>
                       )}
                     </div>
                   </div>
                   <div className="divide-y">
                     {[
-                      { id: 1, name: "Max Mustermann", company: "Weingut A", score: 18 },
-                      { id: 2, name: "Anna Schmidt", company: "Weinhandlung B", score: 15 },
-                      { id: 3, name: "Thomas Müller", company: "Privat", score: 12 }
+                      { id: 1, name: "Max Mustermann", company: "Weingut A", score: 18, profileImage: "https://i.pravatar.cc/150?img=1" },
+                      { id: 2, name: "Anna Schmidt", company: "Weinhandlung B", score: 15, profileImage: "https://i.pravatar.cc/150?img=5" },
+                      { id: 3, name: "Thomas Müller", company: "Privat", score: 12, profileImage: "https://i.pravatar.cc/150?img=8" }
                     ].map((participant) => (
                       <div key={participant.id} className="p-4 flex justify-between items-center">
                         <div>
@@ -809,19 +809,33 @@ export default function TastingDetailPage() {
                     
                     <div className="space-y-4">
                       <div className="flex flex-col space-y-2">
-                        <label className="text-sm font-medium">
-                          Anzahl der angezeigten Platzierungen: <span className="font-bold">{leaderboardVisibility}</span>
-                        </label>
+                        <div className="flex justify-between mb-2">
+                          <label className="text-sm font-medium">
+                            {leaderboardVisibility === 0
+                              ? "Alle Teilnehmer werden angezeigt"
+                              : `Anzahl der angezeigten Platzierungen: ${leaderboardVisibility}`}
+                          </label>
+                          <button
+                            onClick={() => handleLeaderboardVisibilityChange(0)}
+                            className={`text-xs px-2 py-1 rounded ${
+                              leaderboardVisibility === 0
+                                ? "bg-[#4C0519] text-white"
+                                : "bg-gray-100 hover:bg-gray-200"
+                            }`}
+                          >
+                            Alle anzeigen
+                          </button>
+                        </div>
                         <input 
                           type="range" 
-                          min="1" 
+                          min="0" 
                           max="10" 
                           value={leaderboardVisibility}
                           onChange={(e) => handleLeaderboardVisibilityChange(parseInt(e.target.value))}
                           className="w-full accent-[#4C0519]"
                         />
                         <div className="flex justify-between text-xs text-gray-500">
-                          <span>1</span>
+                          <span>Alle</span>
                           <span>5</span>
                           <span>10</span>
                         </div>
@@ -830,23 +844,43 @@ export default function TastingDetailPage() {
                       <div className="bg-gray-50 p-4 rounded border">
                         <h4 className="font-medium mb-2">Vorschau:</h4>
                         <div className="space-y-2">
-                          {Array.from({length: leaderboardVisibility}).map((_, index) => (
-                            <div key={index} className="flex justify-between items-center p-2 bg-white rounded">
-                              <div className="flex items-center">
-                                <div className={`w-6 h-6 rounded-full flex items-center justify-center mr-2 ${
-                                  index === 0 ? 'bg-yellow-500' : 
-                                  index === 1 ? 'bg-gray-400' : 
-                                  index === 2 ? 'bg-amber-700' : 'bg-[#4C0519]'
-                                } text-white text-xs font-bold`}>
-                                  {index + 1}
+                          {leaderboardVisibility === 0 ? (
+                            // Zeige alle Teilnehmer an (hier fünf für die Vorschau)
+                            Array.from({length: 5}).map((_, index) => (
+                              <div key={index} className="flex justify-between items-center p-2 bg-white rounded">
+                                <div className="flex items-center">
+                                  <div className={`w-6 h-6 rounded-full flex items-center justify-center mr-2 ${
+                                    index === 0 ? 'bg-yellow-500' : 
+                                    index === 1 ? 'bg-gray-400' : 
+                                    index === 2 ? 'bg-amber-700' : 'bg-[#4C0519]'
+                                  } text-white text-xs font-bold`}>
+                                    {index + 1}
+                                  </div>
+                                  <span className="font-medium">Teilnehmer {index + 1}</span>
                                 </div>
-                                <span className="font-medium">Teilnehmer {index + 1}</span>
+                                <span className="text-sm font-bold">{(20 - index * 2)} Punkte</span>
                               </div>
-                              <span className="text-sm font-bold">{(20 - index * 2)} Punkte</span>
-                            </div>
-                          ))}
+                            ))
+                          ) : (
+                            // Zeige nur die angegebene Anzahl an Platzierungen
+                            Array.from({length: leaderboardVisibility}).map((_, index) => (
+                              <div key={index} className="flex justify-between items-center p-2 bg-white rounded">
+                                <div className="flex items-center">
+                                  <div className={`w-6 h-6 rounded-full flex items-center justify-center mr-2 ${
+                                    index === 0 ? 'bg-yellow-500' : 
+                                    index === 1 ? 'bg-gray-400' : 
+                                    index === 2 ? 'bg-amber-700' : 'bg-[#4C0519]'
+                                  } text-white text-xs font-bold`}>
+                                    {index + 1}
+                                  </div>
+                                  <span className="font-medium">Teilnehmer {index + 1}</span>
+                                </div>
+                                <span className="text-sm font-bold">{(20 - index * 2)} Punkte</span>
+                              </div>
+                            ))
+                          )}
                           
-                          {leaderboardVisibility < 5 && (
+                          {leaderboardVisibility > 0 && leaderboardVisibility < 5 && (
                             <div className="text-center text-gray-500 text-sm py-2 border-t">
                               Weitere Platzierungen sind nur für den Host sichtbar
                             </div>
