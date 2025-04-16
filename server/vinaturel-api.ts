@@ -38,78 +38,51 @@ async function authenticate(credentials: VinaturelCredentials): Promise<string> 
       apiKey: credentials.apiKey ? `${credentials.apiKey.substring(0, 5)}...` : 'not set'
     });
     
-    const response = await axios.post('https://vinaturel.de/store-api/auth', {
-      identifier: credentials.username,
-      password: credentials.password
-    }, {
-      headers: {
-        'Content-Type': 'application/json',
-        'sw-access-key': credentials.apiKey,
-        'sw-context-token': credentials.apiKey,
-        'Accept': 'application/json'
-      }
-    });
-
-    console.log('Authentication response status:', response.status);
-    console.log('Authentication response data:', JSON.stringify(response.data, null, 2));
-
-    // Calculate token expiration (assuming token expires in 1 hour)
-    const expiresAt = new Date();
-    expiresAt.setHours(expiresAt.getHours() + 1);
-
-    // Cache the token
-    cachedToken = {
-      token: response.data.access_token,
-      expiresAt
-    };
-
-    return response.data.access_token;
+    // Die Vinaturel-API benötigt keine Auth für die meisten Anfragen, nur den Access Key
+    // Simulieren einer erfolgreichen Authentifizierung
+    return "success-token";
   } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error('Error authenticating with Vinaturel API:', {
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        data: error.response?.data
-      });
-    } else {
-      console.error('Error authenticating with Vinaturel API:', error);
-    }
-    throw new Error('Failed to authenticate with Vinaturel API');
+    console.error('Authentication error:', error);
+    throw new Error('Authentication failed');
   }
 }
 
-async function fetchWines(credentials: VinaturelCredentials, limit = 50, page = 1): Promise<VinaturelWine[]> {
+async function fetchWines(credentials: VinaturelCredentials, search?: string, limit = 20, page = 1): Promise<VinaturelWine[]> {
   try {
-    const token = await authenticate(credentials);
+    // Wir nutzen die Such-API für die Weinsuche
+    const url = search 
+      ? 'https://www.vinaturel.de/store-api/search'
+      : 'https://www.vinaturel.de/store-api/product';
     
-    console.log('Fetching wines with token', token ? `${token.substring(0, 10)}...` : 'not available');
+    const requestData = search
+      ? { search, limit, page }
+      : { 
+          limit, 
+          page,
+          filter: [{ type: "equals", field: "active", value: "1" }]
+        };
     
-    const response = await axios.post('https://vinaturel.de/store-api/product', {
-      limit,
-      page,
-      filter: [
-        {
-          type: "equals",
-          field: "active",
-          value: "1"
-        }
-      ]
-    }, {
+    console.log(`Fetching wines from ${url} with ${search ? 'search term: ' + search : 'no search term'}`);
+    
+    const response = await axios.post(url, requestData, {
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'sw-access-key': credentials.apiKey
+        'sw-access-key': credentials.apiKey,
+        'Accept': 'application/json'
       }
     });
     
     console.log('Wine search response status:', response.status);
-    console.log('Wine search response data structure:', {
-      total: response.data.total,
-      elementCount: response.data.elements?.length || 0
-    });
+    
+    // Die Struktur der Antwort ist unterschiedlich, je nachdem, ob wir die Such-API oder die Produkt-API verwenden
+    const elements = search 
+      ? response.data.listing?.elements || []
+      : response.data.elements || [];
+    
+    console.log(`Found ${elements.length} wines`);
 
     // Transform the response into our VinaturelWine format
-    return response.data.elements.map((item: any) => {
+    return elements.map((item: any) => {
       // Extract grape varieties from product attributes or properties
       const varietals = extractVarietals(item);
       
@@ -121,7 +94,7 @@ async function fetchWines(credentials: VinaturelCredentials, limit = 50, page = 
         region: extractRegion(item),
         vintage: extractVintage(item),
         varietals,
-        price: item.price?.gross || 0,
+        price: item.calculatedPrice?.unitPrice || item.price?.gross || 0,
         imageUrl: extractImageUrl(item),
         description: item.description || ''
       };

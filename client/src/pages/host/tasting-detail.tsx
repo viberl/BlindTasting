@@ -290,7 +290,7 @@ export default function TastingDetailPage() {
                       </Badge>
                     </div>
                     <CardDescription>
-                      {Math.floor(flight.timeLimit / 60)} Minuten | {flight.wines?.length || 0} Weine
+                      {flight.wines?.length || 0} Weine
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="pt-6">
