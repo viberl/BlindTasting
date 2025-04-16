@@ -72,9 +72,11 @@ export default function TastingDetailPage() {
     name: 1,
     vintage: 1,
     country: 1,
-    region: 1
+    region: 1,
+    varietals: 1,
+    varietalsMode: 'per' // 'per' = Punkte pro Rebsorte, 'all' = Punkte nur wenn alle korrekt
   });
-  const [leaderboardVisibility, setLeaderboardVisibility] = useState(3);
+  const [leaderboardVisibility, setLeaderboardVisibility] = useState(3); // 0 = Alle anzeigen
   
   // Lade Tastings-Details
   const { data: tasting, isLoading: isTastingLoading, error: tastingError } = useQuery<Tasting>({
@@ -211,14 +213,47 @@ export default function TastingDetailPage() {
     });
   };
   
+  const handleVarietalsChange = (value: number) => {
+    setPointsConfiguration(prev => ({
+      ...prev,
+      varietals: value
+    }));
+    
+    toast({
+      title: "Punktesystem aktualisiert",
+      description: `Punkte für Rebsorten auf ${value} gesetzt.`,
+    });
+  };
+  
+  const handleVarietalsModeChange = (mode: 'per' | 'all') => {
+    setPointsConfiguration(prev => ({
+      ...prev,
+      varietalsMode: mode
+    }));
+    
+    toast({
+      title: "Punktesystem aktualisiert",
+      description: `Rebsorten-Modus auf "${mode === 'per' ? 'Punkte pro Rebsorte' : 'Punkte nur bei allen korrekt'}" gesetzt.`,
+    });
+  };
+  
   // Einstellungen-Handler
   const handleLeaderboardVisibilityChange = (value: number) => {
     setLeaderboardVisibility(value);
     
     // Hier würde im fertigen System die API aufgerufen werden, um die Einstellung zu speichern
+    let message = '';
+    if (value === 0) {
+      message = 'Alle Teilnehmer werden im Leaderboard angezeigt.';
+    } else if (value === 1) {
+      message = 'Nur der erste Platz wird öffentlich angezeigt.';
+    } else {
+      message = `Es werden nun die Top ${value} Platzierungen öffentlich angezeigt.`;
+    }
+    
     toast({
       title: "Einstellung gespeichert",
-      description: `Es werden nun die Top ${value} Platzierungen öffentlich angezeigt.`,
+      description: message,
     });
   };
 
@@ -372,91 +407,106 @@ export default function TastingDetailPage() {
               <Loader2 className="h-6 w-6 animate-spin text-[#4C0519]" />
             </div>
           ) : flights && flights.length > 0 ? (
-            <div className="grid gap-6 md:grid-cols-2">
-              {flights.map((flight: any) => (
-                <Card key={flight.id} className="overflow-hidden">
-                  <CardHeader className="bg-gray-50">
-                    <div className="flex justify-between items-center">
-                      <CardTitle className="text-xl">Flight {flight.orderIndex + 1}</CardTitle>
-                      <Badge variant={flight.completedAt ? 'secondary' : flight.startedAt ? 'default' : 'outline'}>
-                        {flight.completedAt ? 'Abgeschlossen' : flight.startedAt ? 'Im Gange' : 'Nicht gestartet'}
-                      </Badge>
-                    </div>
-                    <CardDescription className="flex justify-between items-center">
-                      <span>{flight.wines?.length || 0} Weine</span>
-                      {timeLeft !== null && timerFlightId === flight.id && (
-                        <div className="flex items-center text-amber-600 font-medium">
-                          <AlarmClock className="h-4 w-4 mr-1 animate-pulse" />
-                          <span>
-                            {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
-                          </span>
+            <div className="space-y-6">
+              <div className="grid gap-6 md:grid-cols-2">
+                {flights.map((flight: any) => (
+                  <Card key={flight.id} className="overflow-hidden">
+                    <CardHeader className="bg-gray-50">
+                      <div className="flex justify-between items-center">
+                        <CardTitle className="text-xl">Flight {flight.orderIndex + 1}</CardTitle>
+                        <Badge variant={flight.completedAt ? 'secondary' : flight.startedAt ? 'default' : 'outline'}>
+                          {flight.completedAt ? 'Abgeschlossen' : flight.startedAt ? 'Im Gange' : 'Nicht gestartet'}
+                        </Badge>
+                      </div>
+                      <CardDescription className="flex justify-between items-center">
+                        <span>{flight.wines?.length || 0} Weine</span>
+                        {timeLeft !== null && timerFlightId === flight.id && (
+                          <div className="flex items-center text-amber-600 font-medium">
+                            <AlarmClock className="h-4 w-4 mr-1 animate-pulse" />
+                            <span>
+                              {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
+                            </span>
+                          </div>
+                        )}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="pt-6">
+                      {flight.wines && flight.wines.length > 0 ? (
+                        <div className="grid gap-2">
+                          {flight.wines.map((wine: any) => (
+                            <div key={wine.id} className="flex items-center p-2 rounded bg-gray-50">
+                              <div className="h-8 w-8 flex items-center justify-center bg-[#4C0519] text-white rounded-full mr-3">
+                                {wine.letterCode}
+                              </div>
+                              <div>
+                                <p className="font-medium">{wine.producer} {wine.name}</p>
+                                <p className="text-sm text-gray-500">{wine.region}, {wine.country}, {wine.vintage}</p>
+                                <p className="text-sm text-gray-600 italic">{wine.varietals && wine.varietals.join(', ')}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-gray-500 italic">Keine Weine in diesem Flight</p>
+                      )}
+
+                      {isHost && (
+                        <div className="flex gap-2 mt-4">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleAddWine(flight.id)}
+                            className="w-full"
+                          >
+                            Wein hinzufügen
+                          </Button>
+                          {!flight.startedAt && (
+                            <Button
+                              size="sm"
+                              onClick={() => handleStartFlight(flight.id)}
+                              className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
+                              disabled={tasting.status !== 'active'}
+                            >
+                              Flight starten
+                            </Button>
+                          )}
+                          {flight.startedAt && !flight.completedAt && (
+                            <div className="flex w-full gap-2">
+                              <Button
+                                size="sm"
+                                onClick={() => handleSetTimer(flight.id)}
+                                className="w-1/2 bg-amber-600 hover:bg-amber-700"
+                              >
+                                <Clock className="mr-1 h-4 w-4" />
+                                Timer starten
+                              </Button>
+                              <Button
+                                size="sm"
+                                onClick={() => handleCompleteFlight(flight.id)}
+                                className="w-1/2 bg-blue-600 hover:bg-blue-700"
+                              >
+                                Flight abschließen
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       )}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="pt-6">
-                    {flight.wines && flight.wines.length > 0 ? (
-                      <div className="grid gap-2">
-                        {flight.wines.map((wine: any) => (
-                          <div key={wine.id} className="flex items-center p-2 rounded bg-gray-50">
-                            <div className="h-8 w-8 flex items-center justify-center bg-[#4C0519] text-white rounded-full mr-3">
-                              {wine.letterCode}
-                            </div>
-                            <div>
-                              <p className="font-medium">{wine.producer} {wine.name}</p>
-                              <p className="text-sm text-gray-500">{wine.region}, {wine.country}, {wine.vintage}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-gray-500 italic">Keine Weine in diesem Flight</p>
-                    )}
-
-                    {isHost && (
-                      <div className="flex gap-2 mt-4">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleAddWine(flight.id)}
-                          className="w-full"
-                        >
-                          Wein hinzufügen
-                        </Button>
-                        {!flight.startedAt && (
-                          <Button
-                            size="sm"
-                            onClick={() => handleStartFlight(flight.id)}
-                            className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
-                            disabled={tasting.status !== 'active'}
-                          >
-                            Flight starten
-                          </Button>
-                        )}
-                        {flight.startedAt && !flight.completedAt && (
-                          <div className="flex w-full gap-2">
-                            <Button
-                              size="sm"
-                              onClick={() => handleSetTimer(flight.id)}
-                              className="w-1/2 bg-amber-600 hover:bg-amber-700"
-                            >
-                              <Clock className="mr-1 h-4 w-4" />
-                              Timer starten
-                            </Button>
-                            <Button
-                              size="sm"
-                              onClick={() => handleCompleteFlight(flight.id)}
-                              className="w-1/2 bg-blue-600 hover:bg-blue-700"
-                            >
-                              Flight abschließen
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+              
+              {/* Button zum Hinzufügen weiterer Flights */}
+              {isHost && tasting.status === 'draft' && (
+                <div className="flex justify-center">
+                  <Button 
+                    className="w-full md:w-auto bg-[#4C0519] hover:bg-[#3A0413]"
+                    onClick={() => setCreateFlightOpen(true)}
+                  >
+                    Weiteren Flight hinzufügen
+                  </Button>
+                </div>
+              )}
             </div>
           ) : (
             <Card>
@@ -475,8 +525,6 @@ export default function TastingDetailPage() {
               </CardContent>
             </Card>
           )}
-
-          {/* Zweiter "Neuen Flight erstellen" Button wurde entfernt */}
         </TabsContent>
 
         <TabsContent value="participants">
@@ -579,7 +627,7 @@ export default function TastingDetailPage() {
             <CardContent>
               {isHost ? (
                 <div className="space-y-6">
-                  <div className="space-y-4">
+                  <div className="space-y-6">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <label className="text-sm font-medium">Produzent:</label>
@@ -675,11 +723,59 @@ export default function TastingDetailPage() {
                           ))}
                         </div>
                       </div>
+                      
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Rebsorten:</label>
+                        <div className="flex items-center space-x-2">
+                          {[0, 1, 2, 3, 4, 5].map((value) => (
+                            <button
+                              key={value}
+                              className={`w-10 h-10 rounded-full ${
+                                pointsConfiguration.varietals === value 
+                                  ? 'bg-[#4C0519] text-white' 
+                                  : 'bg-gray-100 hover:bg-gray-200'
+                              }`}
+                              onClick={() => handleVarietalsChange(value)}
+                            >
+                              {value}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Rebsorten-Wertung:</label>
+                        <div className="flex flex-col gap-2">
+                          <button
+                            className={`px-4 py-2 rounded text-sm ${
+                              pointsConfiguration.varietalsMode === 'per' 
+                                ? 'bg-[#4C0519] text-white' 
+                                : 'bg-gray-100 hover:bg-gray-200'
+                            }`}
+                            onClick={() => handleVarietalsModeChange('per')}
+                          >
+                            Punkte pro korrekte Rebsorte
+                          </button>
+                          <button
+                            className={`px-4 py-2 rounded text-sm ${
+                              pointsConfiguration.varietalsMode === 'all' 
+                                ? 'bg-[#4C0519] text-white' 
+                                : 'bg-gray-100 hover:bg-gray-200'
+                            }`}
+                            onClick={() => handleVarietalsModeChange('all')}
+                          >
+                            Punkte nur wenn alle Rebsorten korrekt
+                          </button>
+                        </div>
+                      </div>
                     </div>
                     
                     <div className="pt-4 border-t">
                       <div className="text-lg font-medium">Maximale Punktzahl pro Wein: {
-                        Object.values(pointsConfiguration).reduce((sum, value) => sum + value, 0)
+                        Object.entries(pointsConfiguration)
+                          .filter(([key]) => key !== 'varietalsMode')
+                          .map(([_, value]) => typeof value === 'number' ? value : 0)
+                          .reduce((sum, value) => sum + value, 0)
                       }</div>
                     </div>
                   </div>
