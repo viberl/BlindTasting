@@ -63,6 +63,7 @@ export default function WinesSetup() {
         setActiveFlightId(data[0].id);
       }
     },
+    refetchInterval: 3000, // Aktualisiert die Flights automatisch alle 3 Sekunden
   });
 
   const createFlightMutation = useMutation({

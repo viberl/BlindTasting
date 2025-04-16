@@ -284,13 +284,13 @@ export default function TastingDetailPage() {
                 <Card key={flight.id} className="overflow-hidden">
                   <CardHeader className="bg-gray-50">
                     <div className="flex justify-between items-center">
-                      <CardTitle className="text-xl">Flight {flight.orderIndex + 1}: {flight.name}</CardTitle>
+                      <CardTitle className="text-xl">Flight {flight.orderIndex + 1}</CardTitle>
                       <Badge variant={flight.completedAt ? 'secondary' : flight.startedAt ? 'default' : 'outline'}>
                         {flight.completedAt ? 'Abgeschlossen' : flight.startedAt ? 'Im Gange' : 'Nicht gestartet'}
                       </Badge>
                     </div>
                     <CardDescription>
-                      {flight.timeLimit} Minuten | {flight.wines?.length || 0} Weine
+                      {Math.floor(flight.timeLimit / 60)} Minuten | {flight.wines?.length || 0} Weine
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="pt-6">
