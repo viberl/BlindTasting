@@ -573,9 +573,18 @@ export default function TastingDetailPage() {
                       { id: 3, name: "Thomas Müller", company: "Privat", score: 12, profileImage: "https://i.pravatar.cc/150?img=8" }
                     ].map((participant) => (
                       <div key={participant.id} className="p-4 flex justify-between items-center">
-                        <div>
-                          <p className="font-medium">{participant.name}</p>
-                          <p className="text-sm text-gray-500">{participant.company}</p>
+                        <div className="flex items-center">
+                          <div className="w-10 h-10 rounded-full overflow-hidden mr-3 flex-shrink-0">
+                            <img 
+                              src={participant.profileImage} 
+                              alt={`Profilbild von ${participant.name}`}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          <div>
+                            <p className="font-medium">{participant.name}</p>
+                            <p className="text-sm text-gray-500">{participant.company}</p>
+                          </div>
                         </div>
                         <div className="flex items-center gap-6">
                           <div className="w-16 text-right">
@@ -849,12 +858,21 @@ export default function TastingDetailPage() {
                             Array.from({length: 5}).map((_, index) => (
                               <div key={index} className="flex justify-between items-center p-2 bg-white rounded">
                                 <div className="flex items-center">
-                                  <div className={`w-6 h-6 rounded-full flex items-center justify-center mr-2 ${
-                                    index === 0 ? 'bg-yellow-500' : 
-                                    index === 1 ? 'bg-gray-400' : 
-                                    index === 2 ? 'bg-amber-700' : 'bg-[#4C0519]'
-                                  } text-white text-xs font-bold`}>
-                                    {index + 1}
+                                  <div className="relative mr-2">
+                                    <div className="w-8 h-8 rounded-full overflow-hidden">
+                                      <img 
+                                        src={`https://i.pravatar.cc/150?img=${index + 1}`} 
+                                        alt={`Profilbild Teilnehmer ${index + 1}`}
+                                        className="w-full h-full object-cover"
+                                      />
+                                    </div>
+                                    <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center border border-white ${
+                                      index === 0 ? 'bg-yellow-500' : 
+                                      index === 1 ? 'bg-gray-400' : 
+                                      index === 2 ? 'bg-amber-700' : 'bg-[#4C0519]'
+                                    } text-white text-[10px] font-bold`}>
+                                      {index + 1}
+                                    </div>
                                   </div>
                                   <span className="font-medium">Teilnehmer {index + 1}</span>
                                 </div>
@@ -866,12 +884,21 @@ export default function TastingDetailPage() {
                             Array.from({length: leaderboardVisibility}).map((_, index) => (
                               <div key={index} className="flex justify-between items-center p-2 bg-white rounded">
                                 <div className="flex items-center">
-                                  <div className={`w-6 h-6 rounded-full flex items-center justify-center mr-2 ${
-                                    index === 0 ? 'bg-yellow-500' : 
-                                    index === 1 ? 'bg-gray-400' : 
-                                    index === 2 ? 'bg-amber-700' : 'bg-[#4C0519]'
-                                  } text-white text-xs font-bold`}>
-                                    {index + 1}
+                                  <div className="relative mr-2">
+                                    <div className="w-8 h-8 rounded-full overflow-hidden">
+                                      <img 
+                                        src={`https://i.pravatar.cc/150?img=${index + 1}`} 
+                                        alt={`Profilbild Teilnehmer ${index + 1}`}
+                                        className="w-full h-full object-cover"
+                                      />
+                                    </div>
+                                    <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center border border-white ${
+                                      index === 0 ? 'bg-yellow-500' : 
+                                      index === 1 ? 'bg-gray-400' : 
+                                      index === 2 ? 'bg-amber-700' : 'bg-[#4C0519]'
+                                    } text-white text-[10px] font-bold`}>
+                                      {index + 1}
+                                    </div>
                                   </div>
                                   <span className="font-medium">Teilnehmer {index + 1}</span>
                                 </div>
