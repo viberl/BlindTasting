@@ -196,7 +196,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tastingId = parseInt(req.params.id);
       const { status } = req.body;
       
-      if (!status || !["draft", "active", "completed"].includes(status)) {
+      if (!status || !["draft", "saved", "active", "completed"].includes(status)) {
         return res.status(400).json({ error: "Invalid status" });
       }
       
@@ -207,13 +207,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Only the host can update the status
-      if (tasting.hostId !== req.user!.id) {
+      if (req.user && tasting.hostId !== req.user.id) {
         return res.status(403).json({ error: "Only the host can update the tasting status" });
+      }
+      
+      // Wenn wir auf "active" setzen, prüfen wir, ob mindestens ein Flight mit Weinen vorhanden ist
+      if (status === "active") {
+        const flights = await storage.getFlightsByTasting(tastingId);
+        
+        if (!flights || flights.length === 0) {
+          return res.status(400).json({ error: "Tasting requires at least one flight to be activated" });
+        }
+        
+        // Prüfen, ob die Weine in den Flights vorhanden sind
+        let hasWines = false;
+        for (const flight of flights) {
+          const wines = await storage.getWinesByFlight(flight.id);
+          if (wines && wines.length > 0) {
+            hasWines = true;
+            break;
+          }
+        }
+        
+        if (!hasWines) {
+          return res.status(400).json({ error: "Tasting requires at least one wine in a flight to be activated" });
+        }
+        
+        // Scoring Rules prüfen
+        const scoringRules = await storage.getScoringRule(tastingId);
+        if (!scoringRules) {
+          // Erstelle Standard-Scoring-Regeln, wenn keine vorhanden sind
+          await storage.createScoringRule({
+            tastingId,
+            country: 1,
+            region: 1,
+            producer: 2,
+            wineName: 2,
+            vintage: 1,
+            varietals: 1,
+            anyVarietalPoint: true
+          });
+        }
       }
       
       const updatedTasting = await storage.updateTastingStatus(tastingId, status);
       res.json(updatedTasting);
     } catch (error) {
+      console.error("Error updating tasting status:", error);
       res.status(500).json({ error: (error as Error).message });
     }
   });
