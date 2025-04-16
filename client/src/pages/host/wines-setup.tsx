@@ -287,7 +287,16 @@ export default function WinesSetup() {
                         <div className="space-y-4">
                           <div className="flex justify-between items-center">
                             <h4 className="font-medium">Wines in this flight</h4>
-                            <Dialog open={addWineDialogOpen} onOpenChange={setAddWineDialogOpen}>
+                            <Dialog 
+                              open={addWineDialogOpen} 
+                              onOpenChange={(open) => {
+                                setAddWineDialogOpen(open);
+                                // Wenn Dialog geschlossen wird, sofort Flight neu laden
+                                if (!open) {
+                                  setTimeout(() => refetchFlights(), 300);
+                                }
+                              }}
+                            >
                               <DialogTrigger asChild>
                                 <Button 
                                   size="sm" 
@@ -295,14 +304,14 @@ export default function WinesSetup() {
                                   className="flex items-center"
                                 >
                                   <Plus className="h-4 w-4 mr-2" />
-                                  Add Wine
+                                  Wein hinzufügen
                                 </Button>
                               </DialogTrigger>
                               <DialogContent className="max-w-3xl">
                                 <DialogHeader>
-                                  <DialogTitle>Add Wine to Flight</DialogTitle>
+                                  <DialogTitle>Wein zum Flight hinzufügen</DialogTitle>
                                   <DialogDescription>
-                                    Add a new wine to "{flight.name}". You can search the Vinaturel database or add a custom wine.
+                                    Fügen Sie einen neuen Wein zu "{flight.name}" hinzu. Sie können in der Vinaturel-Datenbank suchen oder einen eigenen Wein anlegen.
                                   </DialogDescription>
                                 </DialogHeader>
                                 

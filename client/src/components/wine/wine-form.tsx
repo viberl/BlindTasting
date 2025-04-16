@@ -84,11 +84,11 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
     },
   });
 
-  // Simulate Vinaturel API search
+  // Vinaturel API Weinsuche
   const { data: searchResults, isLoading: searchLoading } = useQuery({
     queryKey: ["/api/wines/search", searchQuery],
     queryFn: () => {
-      if (!searchQuery || searchQuery.length < 3) return { wines: [] };
+      if (!searchQuery || searchQuery.length < 3) return [];
       return fetch(`/api/wines/search?q=${encodeURIComponent(searchQuery)}`).then(res => res.json());
     },
     enabled: searchQuery.length >= 3,

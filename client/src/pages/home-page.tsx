@@ -171,11 +171,28 @@ export default function HomePage() {
           <TabsContent value="available">
             {tastingsData.available.length === 0 ? (
               <div className="text-center py-12">
-                <p className="text-muted-foreground">Es gibt derzeit keine weiteren verfügbaren Tastings.</p>
+                <p className="text-muted-foreground">Es gibt derzeit keine aktiven Verkostungen, an denen Sie teilnehmen können.</p>
+                <div className="mt-4 p-4 bg-gray-50 rounded-lg max-w-lg mx-auto">
+                  <h4 className="font-medium text-sm mb-2">So funktioniert eine Verkostung:</h4>
+                  <ol className="text-sm space-y-2 list-decimal list-inside text-left">
+                    <li>Hosts erstellen Verkostungen und aktivieren sie</li>
+                    <li>Aktive Verkostungen erscheinen hier in der Liste "Verfügbar"</li>
+                    <li>Klicken Sie auf "Teilnehmen", um einer Verkostung beizutreten</li>
+                    <li>Folgen Sie den Anweisungen des Hosts für die Durchführung</li>
+                  </ol>
+                </div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {tastingsData.available.map(tasting => renderTastingCard(tasting, 'available'))}
+              <div className="space-y-6">
+                <div className="p-3 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-700">
+                    <strong>Hinweis:</strong> Hier sehen Sie aktive Verkostungen, an denen Sie teilnehmen können. 
+                    Klicken Sie auf "Teilnehmen", um einer Verkostung beizutreten.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {tastingsData.available.map(tasting => renderTastingCard(tasting, 'available'))}
+                </div>
               </div>
             )}
           </TabsContent>
