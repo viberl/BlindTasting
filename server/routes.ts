@@ -5,13 +5,16 @@ import { setupAuth } from "./auth";
 import { z } from "zod";
 import axios from "axios";
 import { VinaturelAPI } from "./vinaturel-api";
+import { eq } from "drizzle-orm";
+import { db } from "./db";
 import {
   insertTastingSchema,
   insertScoringRuleSchema,
   insertFlightSchema,
   insertWineSchema,
   insertGuessSchema,
-  insertParticipantSchema
+  insertParticipantSchema,
+  flights
 } from "@shared/schema";
 
 // Helper function to ensure user is authenticated
@@ -367,6 +370,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updatedFlight = await storage.updateFlightTimes(flightId, new Date(), undefined);
       res.json(updatedFlight);
     } catch (error) {
+      res.status(500).json({ error: (error as Error).message });
+    }
+  });
+  
+  // Set a timer for an active flight
+  app.post("/api/flights/:id/timer", async (req, res) => {
+    try {
+      const flightId = parseInt(req.params.id);
+      const { minutes } = req.body;
+      
+      if (!minutes || typeof minutes !== 'number' || minutes <= 0) {
+        return res.status(400).json({ error: "Valid timer minutes required (greater than 0)" });
+      }
+      
+      // Get the flight
+      const flights = Array.from(await storage.getAllTastings())
+        .flatMap(async (tasting) => {
+          return await storage.getFlightsByTasting(tasting.id);
+        });
+      
+      const flight = (await Promise.all(flights)).flat().find(f => f.id === flightId);
+      
+      if (!flight) {
+        return res.status(404).json({ error: "Flight not found" });
+      }
+      
+      // Check if flight is active (started but not completed)
+      if (!flight.startedAt) {
+        return res.status(400).json({ error: "Flight must be started before setting a timer" });
+      }
+      
+      if (flight.completedAt) {
+        return res.status(400).json({ error: "Cannot set timer for completed flight" });
+      }
+      
+      // Get the tasting
+      const tasting = await storage.getTasting(flight.tastingId);
+      if (!tasting) {
+        return res.status(404).json({ error: "Tasting not found" });
+      }
+      
+      // Update flight time limit (convert minutes to seconds)
+      const timeLimit = minutes * 60;
+      const updatedFlight = await db.update(flights)
+        .set({ timeLimit })
+        .where(eq(flights.id, flightId))
+        .returning();
+      
+      res.json(updatedFlight[0]);
+      
+      // Starte einen Timer, der den Flight nach Ablauf automatisch abschließt
+      setTimeout(async () => {
+        try {
+          // Prüfe, ob der Flight noch aktiv ist
+          const currentFlight = await db.select().from(flights).where(eq(flights.id, flightId)).limit(1);
+          
+          if (currentFlight.length > 0 && currentFlight[0].startedAt && !currentFlight[0].completedAt) {
+            // Flight ist noch aktiv, also beenden
+            console.log(`Timer abgelaufen für Flight ${flightId}, beende automatisch`);
+            await storage.updateFlightTimes(flightId, currentFlight[0].startedAt, new Date());
+          }
+        } catch (error) {
+          console.error('Fehler beim automatischen Beenden des Flights:', error);
+        }
+      }, timeLimit * 1000);
+      
+    } catch (error) {
+      console.error('Error setting flight timer:', error);
       res.status(500).json({ error: (error as Error).message });
     }
   });
