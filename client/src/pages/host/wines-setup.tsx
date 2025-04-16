@@ -98,9 +98,12 @@ export default function WinesSetup() {
     },
     onSuccess: (newWine) => {
       queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
+      // Sofortiges Nachladen der Daten erzwingen
+      setTimeout(() => refetchFlights(), 300);
+      setAddWineDialogOpen(false);
       toast({
-        title: "Wine added",
-        description: `${newWine.name} has been added to the flight.`,
+        title: "Wein hinzugefügt",
+        description: `${newWine.name} wurde zum Flight hinzugefügt.`,
       });
     },
     onError: (error: Error) => {
