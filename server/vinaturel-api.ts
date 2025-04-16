@@ -74,10 +74,39 @@ async function fetchWines(credentials: VinaturelCredentials, search?: string, li
     
     console.log('Wine search response status:', response.status);
     
+    // Für Debugging die Antwortstruktur ausgeben
+    if (search) {
+      console.log('Wine search response data structure (keys):', Object.keys(response.data));
+      // Prüfen auf typische Datenstrukturen
+      if (response.data.listing) {
+        console.log('Listing struktur:', Object.keys(response.data.listing));
+      }
+      if (response.data.data) {
+        console.log('Data struktur:', Object.keys(response.data.data));
+      }
+      // Einige Elemente im Debug-Modus anzeigen
+      console.log('Sample response data:', JSON.stringify(response.data).substring(0, 500) + '...');
+    }
+    
     // Die Struktur der Antwort ist unterschiedlich, je nachdem, ob wir die Such-API oder die Produkt-API verwenden
-    const elements = search 
-      ? response.data.listing?.elements || []
-      : response.data.elements || [];
+    let elements = [];
+    
+    if (search) {
+      // Für die Suche API
+      console.log('Search API response structure:', Object.keys(response.data));
+      if (response.data.listing) {
+        elements = response.data.listing.elements || [];
+      } else if (response.data.elements) {
+        elements = response.data.elements || [];
+      } else if (response.data.data && response.data.data.elements) {
+        elements = response.data.data.elements || [];
+      } else if (response.data.data && response.data.data.products) {
+        elements = response.data.data.products || [];
+      }
+    } else {
+      // Für die Produkt API
+      elements = response.data.elements || [];
+    }
     
     console.log(`Found ${elements.length} wines`);
 

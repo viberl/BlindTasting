@@ -104,7 +104,7 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
   }, [form.watch("country")]);
 
   const addVarietal = (varietal: string) => {
-    if (!selectedVarietals.includes(varietal)) {
+    if (!selectedVarietals.includes(varietal) && selectedVarietals.length < 3) {
       const newVarietals = [...selectedVarietals, varietal];
       setSelectedVarietals(newVarietals);
       form.setValue("varietals", newVarietals);
