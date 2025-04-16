@@ -66,6 +66,16 @@ export default function TastingDetailPage() {
   const [timerFlightId, setTimerFlightId] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   
+  // State für Punktesystem und Einstellungen
+  const [pointsConfiguration, setPointsConfiguration] = useState({
+    producer: 1,
+    name: 1,
+    vintage: 1,
+    country: 1,
+    region: 1
+  });
+  const [leaderboardVisibility, setLeaderboardVisibility] = useState(3);
+  
   // Lade Tastings-Details
   const { data: tasting, isLoading: isTastingLoading, error: tastingError } = useQuery<Tasting>({
     queryKey: [`/api/tastings/${tastingId}`],
@@ -288,12 +298,20 @@ export default function TastingDetailPage() {
         {isHost && (
           <div className="flex gap-2">
             {tasting.status === 'draft' && (
-              <Button 
-                onClick={() => updateTastingStatus('active')}
-                className="bg-green-600 hover:bg-green-700"
-              >
-                Verkostung starten
-              </Button>
+              <>
+                <Button 
+                  onClick={() => updateTastingStatus('active')}
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  Verkostung starten
+                </Button>
+                <Button 
+                  onClick={() => updateTastingStatus('saved')}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  Speichern
+                </Button>
+              </>
             )}
             {tasting.status === 'active' && (
               <Button 
@@ -433,14 +451,7 @@ export default function TastingDetailPage() {
             </Card>
           )}
 
-          {isHost && tasting.status === 'draft' && (
-            <Button
-              className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
-              onClick={() => setCreateFlightOpen(true)}
-            >
-              Neuen Flight erstellen
-            </Button>
-          )}
+          {/* Zweiter "Neuen Flight erstellen" Button wurde entfernt */}
         </TabsContent>
 
         <TabsContent value="participants">
