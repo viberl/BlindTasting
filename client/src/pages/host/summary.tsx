@@ -332,8 +332,19 @@ export default function Summary() {
                 <AlertDialogHeader>
                   <AlertDialogTitle>Ready to launch your tasting?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Once launched, your tasting will be visible to participants and they can start joining.
-                    You'll be able to control when each flight starts.
+                    <div className="space-y-2">
+                      <p>Once launched, your tasting will be active and available for participants to join.</p>
+                      <div className="p-3 bg-gray-100 rounded-md">
+                        <h4 className="font-medium text-sm mb-1">How participants join your tasting:</h4>
+                        <ol className="text-sm space-y-1 list-decimal list-inside">
+                          <li>They log in to the app or register if they don't have an account</li>
+                          <li>On the home page, they'll see your tasting in the "Available Tastings" section</li>
+                          <li>They click "Join" to participate in your tasting</li>
+                          <li>You'll see them appear in your participant list on the host dashboard</li>
+                        </ol>
+                      </div>
+                      <p>After launching, you'll have full control over when each flight starts from the host dashboard.</p>
+                    </div>
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

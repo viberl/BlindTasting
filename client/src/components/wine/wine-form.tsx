@@ -279,11 +279,14 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
                   name="varietals"
                   render={() => (
                     <FormItem>
-                      <FormLabel>Grape Varietals</FormLabel>
-                      <Select onValueChange={(value) => addVarietal(value)}>
+                      <FormLabel>Rebsorten (max. 3)</FormLabel>
+                      <Select 
+                        onValueChange={(value) => addVarietal(value)}
+                        disabled={selectedVarietals.length >= 3}
+                      >
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder="Add varietals" />
+                            <SelectValue placeholder={selectedVarietals.length >= 3 ? "Max. 3 Rebsorten" : "Rebsorte hinzufügen"} />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
@@ -302,6 +305,12 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
                           </Badge>
                         ))}
                       </div>
+                      {selectedVarietals.length === 0 && (
+                        <p className="text-sm text-gray-500 mt-2">Bitte mindestens eine Rebsorte auswählen</p>
+                      )}
+                      {selectedVarietals.length >= 3 && (
+                        <p className="text-sm text-amber-600 mt-2">Maximale Anzahl an Rebsorten erreicht (3)</p>
+                      )}
                       <FormMessage />
                     </FormItem>
                   )}
@@ -338,13 +347,13 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
                 <p className="text-center py-10 text-gray-500">Enter at least 3 characters to search</p>
               )}
               
-              {!searchLoading && searchQuery.length >= 3 && searchResults?.wines?.length === 0 && (
-                <p className="text-center py-10 text-gray-500">No wines found for "{searchQuery}"</p>
+              {!searchLoading && searchQuery.length >= 3 && (!searchResults || searchResults.length === 0) && (
+                <p className="text-center py-10 text-gray-500">Keine Weine gefunden für "{searchQuery}"</p>
               )}
               
-              {!searchLoading && searchResults?.wines?.length > 0 && (
+              {!searchLoading && searchQuery.length >= 3 && searchResults && searchResults.length > 0 && (
                 <div className="space-y-2">
-                  {searchResults.wines.map((wine: any) => (
+                  {searchResults.map((wine: any) => (
                     <div 
                       key={wine.id} 
                       className="border rounded p-3 hover:bg-gray-50 cursor-pointer"
