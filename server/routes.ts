@@ -84,7 +84,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const limit = parseInt(req.query.limit as string) || 20;
       const page = parseInt(req.query.page as string) || 1;
       
-      const wines = await VinaturelAPI.fetchWines(credentials, limit, page);
+      const wines = await VinaturelAPI.fetchWines(credentials, undefined, limit, page);
       res.json(wines);
     } catch (error) {
       console.error('Error fetching Vinaturel wines:', error);
@@ -728,22 +728,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         apiKey: process.env.VINATUREL_API_KEY || 'SWSCT5QYLV9K9CQMJ_XI1Q176W'
       };
       
-      // Auf direkten Import anstelle von require verwenden
-      const wines = await VinaturelAPI.fetchWines(credentials);
-      // Filter wines based on query
-      const filteredWines = wines.filter((wine: any) => {
-        const searchTerm = query.toLowerCase();
-        return (
-          wine.name.toLowerCase().includes(searchTerm) ||
-          wine.producer.toLowerCase().includes(searchTerm) ||
-          wine.country.toLowerCase().includes(searchTerm) ||
-          wine.region.toLowerCase().includes(searchTerm) ||
-          wine.varietals.some((varietal: string) => varietal.toLowerCase().includes(searchTerm))
-        );
-      });
+      console.log('Searching for wines with query:', query);
       
-      res.json({ wines: filteredWines });
+      // Direkter Aufruf der Vinaturel API mit dem Suchbegriff
+      const wines = await VinaturelAPI.fetchWines(credentials, query);
+      console.log(`Found ${wines.length} matching wines from Vinaturel API`);
+      
+      return res.json(wines);
     } catch (error) {
+      console.error('Error searching wines:', error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  });
+  
+  // Endpoint to get all wines from vinaturel.de API
+  app.get("/api/wines/all", async (req, res) => {
+    try {
+      // Use vinaturel API
+      const credentials = {
+        username: process.env.VINATUREL_USERNAME || 'verena.oleksyn@web.de',
+        password: process.env.VINATUREL_PASSWORD || 'Vinaturel123',
+        apiKey: process.env.VINATUREL_API_KEY || 'SWSCT5QYLV9K9CQMJ_XI1Q176W'
+      };
+      
+      console.log('Fetching all wines from Vinaturel API');
+      const wines = await VinaturelAPI.fetchWines(credentials);
+      console.log(`Found ${wines.length} wines from Vinaturel API`);
+      
+      return res.json(wines);
+    } catch (error) {
+      console.error('Error fetching all wines:', error);
       res.status(500).json({ error: (error as Error).message });
     }
   });
