@@ -1,6 +1,6 @@
 import { useParams } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Loader2, Wine } from "lucide-react";
+import { Loader2, Wine, Clock, AlarmClock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast, useToast } from "@/hooks/use-toast";
@@ -8,11 +8,47 @@ import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 // Dialoge für Erstellung von Flights und Hinzufügen von Weinen
 import CreateFlightDialog from "@/components/flight/create-flight-dialog";
 import AddWineDialog from "@/components/wine/add-wine-dialog";
+import SetTimerDialog from "@/components/flight/set-timer-dialog";
+
+// Definiere Typen für unsere Daten
+interface Tasting {
+  id: number;
+  name: string;
+  hostId: number;
+  isPublic: boolean;
+  status: string;
+  createdAt: string;
+  completedAt: string | null;
+  password?: string;
+}
+
+interface Wine {
+  id: number;
+  flightId: number;
+  name: string;
+  producer: string;
+  country: string;
+  region: string;
+  vintage: string;
+  varietals: string[];
+  letterCode: string;
+}
+
+interface Flight {
+  id: number;
+  tastingId: number;
+  name: string;
+  orderIndex: number;
+  timeLimit: number;
+  startedAt: string | null;
+  completedAt: string | null;
+  wines: Wine[];
+}
 
 export default function TastingDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -23,7 +59,71 @@ export default function TastingDetailPage() {
   // State für Dialoge
   const [createFlightOpen, setCreateFlightOpen] = useState(false);
   const [addWineDialogOpen, setAddWineDialogOpen] = useState(false);
+  const [setTimerDialogOpen, setSetTimerDialogOpen] = useState(false);
   const [selectedFlightId, setSelectedFlightId] = useState<number | null>(null);
+  
+  // State für Timer-Countdown
+  const [timerFlightId, setTimerFlightId] = useState<number | null>(null);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  
+  // Lade Tastings-Details
+  const { data: tasting, isLoading: isTastingLoading, error: tastingError } = useQuery<Tasting>({
+    queryKey: [`/api/tastings/${tastingId}`],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/tastings/${tastingId}`);
+      return res.json();
+    },
+    enabled: !isNaN(tastingId),
+  });
+
+  // Lade Flights für diese Verkostung
+  const { data: flights, isLoading: isFlightsLoading } = useQuery<Flight[]>({
+    queryKey: [`/api/tastings/${tastingId}/flights`],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/tastings/${tastingId}/flights`);
+      return res.json();
+    },
+    enabled: !isNaN(tastingId) && !!tasting,
+  });
+  
+  // Timer-Effekt für aktive Flights
+  useEffect(() => {
+    if (!flights) return;
+    
+    // Finde einen aktiven Flight mit Timer
+    const activeFlightWithTimer = flights.find(
+      f => f.startedAt && !f.completedAt && f.timeLimit > 0
+    );
+    
+    if (activeFlightWithTimer) {
+      setTimerFlightId(activeFlightWithTimer.id);
+      
+      // Berechne die verbleibende Zeit
+      const startTime = new Date(activeFlightWithTimer.startedAt!).getTime();
+      const timeLimitMs = activeFlightWithTimer.timeLimit * 1000;
+      const endTime = startTime + timeLimitMs;
+      const now = Date.now();
+      const remainingTime = Math.max(0, Math.floor((endTime - now) / 1000));
+      
+      setTimeLeft(remainingTime);
+      
+      // Starte den Timer, um die verbleibende Zeit zu aktualisieren
+      const timer = setInterval(() => {
+        setTimeLeft(prev => {
+          if (prev === null || prev <= 0) {
+            clearInterval(timer);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      
+      return () => clearInterval(timer);
+    } else {
+      setTimerFlightId(null);
+      setTimeLeft(null);
+    }
+  }, [flights]);
   
   // Mutationen für Flight-Aktionen
   const startFlightMutation = useMutation({
@@ -81,61 +181,11 @@ export default function TastingDetailPage() {
   const handleCompleteFlight = (flightId: number) => {
     completeFlightMutation.mutate(flightId);
   };
-
-  // Definiere Typen für unsere Daten
-  interface Tasting {
-    id: number;
-    name: string;
-    hostId: number;
-    isPublic: boolean;
-    status: string;
-    createdAt: string;
-    completedAt: string | null;
-    password?: string;
-  }
-
-  interface Wine {
-    id: number;
-    flightId: number;
-    name: string;
-    producer: string;
-    country: string;
-    region: string;
-    vintage: string;
-    varietals: string[];
-    letterCode: string;
-  }
-
-  interface Flight {
-    id: number;
-    tastingId: number;
-    name: string;
-    orderIndex: number;
-    timeLimit: number;
-    startedAt: string | null;
-    completedAt: string | null;
-    wines: Wine[];
-  }
-
-  // Lade Tastings-Details
-  const { data: tasting, isLoading: isTastingLoading, error: tastingError } = useQuery<Tasting>({
-    queryKey: [`/api/tastings/${tastingId}`],
-    queryFn: async () => {
-      const res = await apiRequest("GET", `/api/tastings/${tastingId}`);
-      return res.json();
-    },
-    enabled: !isNaN(tastingId),
-  });
-
-  // Lade Flights für diese Verkostung
-  const { data: flights, isLoading: isFlightsLoading } = useQuery<Flight[]>({
-    queryKey: [`/api/tastings/${tastingId}/flights`],
-    queryFn: async () => {
-      const res = await apiRequest("GET", `/api/tastings/${tastingId}/flights`);
-      return res.json();
-    },
-    enabled: !isNaN(tastingId) && !!tasting,
-  });
+  
+  const handleSetTimer = (flightId: number) => {
+    setSelectedFlightId(flightId);
+    setSetTimerDialogOpen(true);
+  };
 
   // Statusänderung der Verkostung
   const updateTastingStatus = async (status: string) => {
@@ -289,8 +339,16 @@ export default function TastingDetailPage() {
                         {flight.completedAt ? 'Abgeschlossen' : flight.startedAt ? 'Im Gange' : 'Nicht gestartet'}
                       </Badge>
                     </div>
-                    <CardDescription>
-                      {flight.wines?.length || 0} Weine
+                    <CardDescription className="flex justify-between items-center">
+                      <span>{flight.wines?.length || 0} Weine</span>
+                      {timeLeft !== null && timerFlightId === flight.id && (
+                        <div className="flex items-center text-amber-600 font-medium">
+                          <AlarmClock className="h-4 w-4 mr-1 animate-pulse" />
+                          <span>
+                            {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
+                          </span>
+                        </div>
+                      )}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="pt-6">
@@ -333,13 +391,23 @@ export default function TastingDetailPage() {
                           </Button>
                         )}
                         {flight.startedAt && !flight.completedAt && (
-                          <Button
-                            size="sm"
-                            onClick={() => handleCompleteFlight(flight.id)}
-                            className="w-full bg-blue-600 hover:bg-blue-700"
-                          >
-                            Flight abschließen
-                          </Button>
+                          <div className="flex w-full gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() => handleSetTimer(flight.id)}
+                              className="w-1/2 bg-amber-600 hover:bg-amber-700"
+                            >
+                              <Clock className="mr-1 h-4 w-4" />
+                              Timer starten
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => handleCompleteFlight(flight.id)}
+                              className="w-1/2 bg-blue-600 hover:bg-blue-700"
+                            >
+                              Flight abschließen
+                            </Button>
+                          </div>
                         )}
                       </div>
                     )}
@@ -443,11 +511,19 @@ export default function TastingDetailPage() {
       />
       
       {selectedFlightId && (
-        <AddWineDialog 
-          flightId={selectedFlightId}
-          open={addWineDialogOpen}
-          onOpenChange={setAddWineDialogOpen}
-        />
+        <>
+          <AddWineDialog 
+            flightId={selectedFlightId}
+            open={addWineDialogOpen}
+            onOpenChange={setAddWineDialogOpen}
+          />
+          
+          <SetTimerDialog
+            flightId={selectedFlightId}
+            open={setTimerDialogOpen}
+            onOpenChange={setSetTimerDialogOpen}
+          />
+        </>
       )}
     </div>
   );
