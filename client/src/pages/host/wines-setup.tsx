@@ -56,7 +56,7 @@ export default function WinesSetup() {
     queryKey: [`/api/tastings/${tastingId}`],
   });
 
-  const { data: flights, isLoading: flightsLoading } = useQuery<Flight[]>({
+  const { data: flights, isLoading: flightsLoading, refetch: refetchFlights } = useQuery<Flight[]>({
     queryKey: [`/api/tastings/${tastingId}/flights`],
     onSuccess: (data) => {
       if (data.length > 0 && !activeFlightId) {
@@ -134,6 +134,13 @@ export default function WinesSetup() {
 
   const handleAddWine = (wineData: Omit<InsertWine, "letterCode">) => {
     addWineMutation.mutate(wineData);
+    // Dialog zuerst schließen, dann nach erfolgreichem Hinzufügen des Weins neu laden
+    setAddWineDialogOpen(false);
+    
+    // Sofort neu laden, ohne auf die Cache-Invalidierung zu warten
+    setTimeout(() => {
+      refetchFlights();
+    }, 500);
   };
 
   const handleFinish = () => {
