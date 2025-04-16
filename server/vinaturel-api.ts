@@ -84,10 +84,19 @@ async function fetchWines(credentials: VinaturelCredentials, limit = 50, page = 
     
     console.log('Fetching wines with token', token ? `${token.substring(0, 10)}...` : 'not available');
     
-    const response = await axios.post('https://vinaturel.de/store-api/product', {
-      limit,
-      page,
-      filter: [
+    const response = await axios.post('https://vinaturel.de/store-api/product', {}, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'sw-access-key': credentials.apiKey
+      }
+    });
+
+    console.log('Wine search response:', response.data);
+
+    // Transform the response into our VinaturelWine format
+    return (response.data.elements || []).map((item: any) => ({
         {
           type: "equals",
           field: "active",
