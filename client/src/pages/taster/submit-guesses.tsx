@@ -5,7 +5,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { 
   Tasting,
-  Flight,
+  Flight as BaseFlight,
   Wine,
   Participant,
   InsertGuess
@@ -54,21 +54,12 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import FlightTimer from "@/components/flight/flight-timer";
+import { countries as COUNTRY_LIST, countryToRegions } from "@/data/country-regions";
+import VarietalCombobox from "@/components/wine/varietal-combobox";
 
-// Mock data for dropdowns - in a real app, these would come from an API
-const countries = ["France", "Italy", "Spain", "Germany", "United States", "Australia", "Argentina", "Chile", "Portugal", "South Africa"];
-const regions = {
-  "France": ["Bordeaux", "Burgundy", "Champagne", "Rhône Valley", "Loire Valley", "Alsace", "Provence"],
-  "Italy": ["Tuscany", "Piedmont", "Veneto", "Sicily", "Lombardy", "Puglia"],
-  "Spain": ["Rioja", "Ribera del Duero", "Priorat", "Rías Baixas", "Jerez"],
-  "Germany": ["Mosel", "Rheingau", "Pfalz", "Baden", "Rheinhessen"],
-  "United States": ["Napa Valley", "Sonoma", "Willamette Valley", "Central Coast", "Washington"]
-};
-const varietals = [
-  "Cabernet Sauvignon", "Merlot", "Pinot Noir", "Syrah/Shiraz", "Zinfandel", 
-  "Grenache", "Tempranillo", "Sangiovese", "Nebbiolo", "Malbec",
-  "Chardonnay", "Sauvignon Blanc", "Riesling", "Pinot Grigio", "Gewürztraminer"
-];
+// Options for dropdowns (German)
+const countries = COUNTRY_LIST;
+// Rebsorten mit Suche kommen aus VarietalCombobox
 
 // Create guess schema
 const guessSchema = z.object({
@@ -76,7 +67,7 @@ const guessSchema = z.object({
   region: z.string().optional(),
   producer: z.string().optional(),
   name: z.string().optional(),
-  vintage: z.string().optional(),
+  vintage: z.preprocess((v) => (v === "" ? undefined : v), z.string().regex(/^\d{4}$/, { message: "Bitte 4-stelliges Jahr" }).optional()),
   rating: z.preprocess(
     (val) => (val === "" ? null : Number(val)),
     z.number().min(88).max(100).nullable().optional()
@@ -92,10 +83,16 @@ export default function SubmitGuesses() {
   const [location, navigate] = useLocation();
   const { toast } = useToast();
   const { user } = useAuth();
+  
+  // Timer state (only becomes active when host explicitly starts a timer)
+  const [timerActive, setTimerActive] = useState(false);
+  const [timerLimit, setTimerLimit] = useState<number>(0);
+  const [timerStartedAt, setTimerStartedAt] = useState<string | null>(null);
 
-  // Get flight ID from URL query parameter
-  const searchParams = new URLSearchParams(location.split('?')[1] || '');
-  const flightId = parseInt(searchParams.get('flight') || '0');
+  // Get flight ID from URL query parameter (use window.location.search – wouter's location excludes query)
+  const rawSearch = typeof window !== 'undefined' ? window.location.search : '';
+  const searchParams = new URLSearchParams(rawSearch || '');
+  const flightId = parseInt(searchParams.get('flight') || '0', 10);
 
   const [selectedWineId, setSelectedWineId] = useState<number | null>(null);
   const [selectedVarietals, setSelectedVarietals] = useState<string[]>([]);
@@ -106,29 +103,78 @@ export default function SubmitGuesses() {
     queryKey: [`/api/tastings/${tastingId}`],
   });
 
+  type Flight = BaseFlight & { wines: Wine[] };
+
   const { data: flights, isLoading: flightsLoading } = useQuery<Flight[]>({
-    queryKey: [`/api/tastings/${tastingId}/flights`],
-  });
+    queryKey: ['flights', tastingId],
+    queryFn: async () => {
+      const res = await fetch(`/api/tastings/${tastingId}/flights`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Fehler beim Laden der Flights');
+      return res.json();
+    },
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchInterval: 2000,
+  } as any);
 
   const { data: participants, isLoading: participantsLoading } = useQuery<Participant[]>({
     queryKey: [`/api/tastings/${tastingId}/participants`],
-    onSuccess: (data) => {
-      const currentParticipant = data.find(p => p.userId === user?.id);
+    staleTime: 0,
+    refetchInterval: 5000,
+  });
+
+  useEffect(() => {
+    if (participants && participants.length > 0 && user?.id) {
+      const currentParticipant = participants.find(p => p.userId === user.id);
       if (currentParticipant) {
         setCurrentParticipantId(currentParticipant.id);
       }
     }
-  });
+  }, [participants, user]);
 
   const [currentParticipantId, setCurrentParticipantId] = useState<number | null>(null);
+  const [attemptedAutoJoin, setAttemptedAutoJoin] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("");
 
   // Get the current flight
-  const currentFlight = flights?.find(f => f.id === flightId);
+  // Pick current flight: prefer "flight" query param, otherwise active started flight
+  const currentFlight = flights?.find(f => f.id === flightId) ||
+    flights?.find(f => f.startedAt && !f.completedAt);
+
+  // Listen for timer_started via WebSocket to enable the timer only when host sets it
+  useEffect(() => {
+    if (!tastingId || !currentFlight?.id) return;
+    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+    const u = user?.id ? `&u=${user.id}` : '';
+    const ws = new WebSocket(`${protocol}://${window.location.host}/ws/join?t=${tastingId}${u}`);
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'timer_started' && data.flightId === currentFlight.id) {
+          setTimerActive(true);
+          setTimerLimit(Number(data.timeLimit) || 0);
+          setTimerStartedAt(data.startedAt || new Date().toISOString());
+        }
+      } catch {}
+    };
+
+    return () => {
+      try { ws.close(); } catch {}
+    };
+  }, [tastingId, currentFlight?.id, user?.id]);
+
+  // Reset timer state when flight changes
+  useEffect(() => {
+    setTimerActive(false);
+    setTimerLimit(0);
+    setTimerStartedAt(null);
+  }, [currentFlight?.id]);
 
   // Set up form with react-hook-form
   const form = useForm<GuessFormData>({
     resolver: zodResolver(guessSchema),
+    mode: "onChange",
     defaultValues: {
       country: "",
       region: "",
@@ -157,10 +203,13 @@ export default function SubmitGuesses() {
   // Update available regions when country changes
   useEffect(() => {
     const country = form.watch("country");
-    if (country && regions[country as keyof typeof regions]) {
-      setAvailableRegions(regions[country as keyof typeof regions]);
+    if (country && countryToRegions[country as keyof typeof countryToRegions]) {
+      setAvailableRegions(countryToRegions[country as keyof typeof countryToRegions]);
+      // reset region when country changes
+      form.setValue("region", "");
     } else {
       setAvailableRegions([]);
+      form.setValue("region", "");
     }
   }, [form.watch("country")]);
 
@@ -172,6 +221,27 @@ export default function SubmitGuesses() {
     }
   }, [currentFlight, selectedWineId]);
 
+  // Auto-Join fallback: wenn der Nutzer (noch) nicht in der Teilnehmerliste ist, versuche beizutreten
+  useEffect(() => {
+    const tryAutoJoin = async () => {
+      if (!user?.id || !tastingId) return;
+      if (!participants || participantsLoading) return;
+      const isParticipant = participants.some(p => p.userId === user.id);
+      if (!isParticipant && !attemptedAutoJoin) {
+        try {
+          await apiRequest('POST', `/api/tastings/${tastingId}/join`, {});
+          // Nach Join neu laden
+          await queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/participants`] });
+        } catch (e) {
+          // Ignorieren; UI zeigt dann weiterhin den Hinweis
+        } finally {
+          setAttemptedAutoJoin(true);
+        }
+      }
+    };
+    tryAutoJoin();
+  }, [participants, participantsLoading, user?.id, tastingId, attemptedAutoJoin]);
+
   // Submit guess mutation
   const submitGuessMutation = useMutation({
     mutationFn: async (data: InsertGuess) => {
@@ -180,8 +250,8 @@ export default function SubmitGuesses() {
     },
     onSuccess: () => {
       toast({
-        title: "Guess submitted",
-        description: `Your guess for Wine ${currentFlight?.wines.find(w => w.id === selectedWineId)?.letterCode} has been saved.`,
+        title: "Tipp gespeichert",
+        description: `Ihr Tipp für Wein ${currentFlight?.wines.find(w => w.id === selectedWineId)?.letterCode} wurde gespeichert.`,
       });
       
       // Move to the next wine if available
@@ -196,7 +266,7 @@ export default function SubmitGuesses() {
     },
     onError: (error: Error) => {
       toast({
-        title: "Failed to submit guess",
+        title: "Tipp konnte nicht gesendet werden",
         description: error.message,
         variant: "destructive",
       });
@@ -204,13 +274,6 @@ export default function SubmitGuesses() {
   });
 
   // Handle adding and removing varietals
-  const addVarietal = (varietal: string) => {
-    if (!selectedVarietals.includes(varietal)) {
-      const newVarietals = [...selectedVarietals, varietal];
-      setSelectedVarietals(newVarietals);
-    }
-  };
-
   const removeVarietal = (varietal: string) => {
     const newVarietals = selectedVarietals.filter(v => v !== varietal);
     setSelectedVarietals(newVarietals);
@@ -220,8 +283,8 @@ export default function SubmitGuesses() {
   const onSubmit = (formData: GuessFormData) => {
     if (!currentParticipantId || !selectedWineId) {
       toast({
-        title: "Error",
-        description: "Unable to submit guess. Please try again.",
+        title: "Fehler",
+        description: "Tipp kann nicht gesendet werden. Bitte versuchen Sie es erneut.",
         variant: "destructive",
       });
       return;
@@ -241,6 +304,8 @@ export default function SubmitGuesses() {
     const selectedWine = currentFlight?.wines.find(w => w.letterCode === value);
     if (selectedWine) {
       setSelectedWineId(selectedWine.id);
+      // reset vintage choice when switching wines
+      form.setValue("vintage", "");
     }
   };
 
@@ -249,24 +314,39 @@ export default function SubmitGuesses() {
     navigate(`/tasting/${tastingId}`);
   };
 
-  // Loading state
-  if (tastingLoading || flightsLoading || participantsLoading || !currentFlight) {
+  // Loading state (initial fetch only). Keep form visible during refetches.
+  if ((tastingLoading || flightsLoading || participantsLoading) && !flights) {
     return (
       <div className="flex items-center justify-center h-[50vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-[#4C0519]" />
+        <Loader2 className="h-8 w-8 animate-spin text-[#274E37]" />
+      </div>
+    );
+  }
+
+  // If we have data but no active/current flight, show info instead of spinner
+  if (!currentFlight) {
+    return (
+      <div className="container mx-auto py-8 px-4">
+        <div className="text-center">
+          <h2 className="text-2xl font-bold text-amber-600">Flight nicht aktiv</h2>
+          <p className="mt-2">Dieser Flight ist derzeit nicht aktiv.</p>
+          <Button className="mt-4" onClick={() => navigate(`/tasting/${tastingId}`)}>
+            Zurück zur Verkostung
+          </Button>
+        </div>
       </div>
     );
   }
 
   // Check if user is a participant
-  if (!participants?.some(p => p.userId === user?.id)) {
+  if (!participantsLoading && attemptedAutoJoin && !participants?.some(p => p.userId === user?.id)) {
     return (
       <div className="container mx-auto py-8 px-4">
         <div className="text-center">
-          <h2 className="text-2xl font-bold text-red-600">Not a participant</h2>
-          <p className="mt-2">You are not participating in this tasting.</p>
+          <h2 className="text-2xl font-bold text-red-600">Kein Teilnehmer</h2>
+          <p className="mt-2">Sie nehmen an dieser Verkostung nicht teil.</p>
           <Button className="mt-4" onClick={() => navigate(`/tasting/${tastingId}`)}>
-            Return to Tasting
+            Zurück zur Verkostung
           </Button>
         </div>
       </div>
@@ -278,10 +358,10 @@ export default function SubmitGuesses() {
     return (
       <div className="container mx-auto py-8 px-4">
         <div className="text-center">
-          <h2 className="text-2xl font-bold text-amber-600">Flight not active</h2>
-          <p className="mt-2">This flight is not currently active.</p>
+          <h2 className="text-2xl font-bold text-amber-600">Flight nicht aktiv</h2>
+          <p className="mt-2">Dieser Flight ist derzeit nicht aktiv.</p>
           <Button className="mt-4" onClick={() => navigate(`/tasting/${tastingId}`)}>
-            Return to Tasting
+            Zurück zur Verkostung
           </Button>
         </div>
       </div>
@@ -296,22 +376,24 @@ export default function SubmitGuesses() {
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <div>
                 <div className="flex items-center gap-2 mb-2">
-                  <CardTitle className="text-2xl font-display text-[#4C0519]">Submit Your Guesses</CardTitle>
+                  <CardTitle className="text-2xl font-display text-[#274E37]">Tipps abgeben</CardTitle>
                 </div>
                 <CardDescription>
                   {currentFlight.name}
                 </CardDescription>
               </div>
-              <div className="text-right">
-                <p className="text-sm font-medium text-gray-900">Time remaining</p>
-                <FlightTimer
-                  flightId={currentFlight.id}
-                  timeLimit={currentFlight.timeLimit}
-                  startedAt={currentFlight.startedAt}
-                  completedAt={currentFlight.completedAt}
-                  isHost={false}
-                />
-              </div>
+              {timerActive && (
+                <div className="text-right">
+                  <p className="text-sm font-medium text-gray-900">Verbleibende Zeit</p>
+                  <FlightTimer
+                    flightId={currentFlight.id}
+                    timeLimit={timerLimit}
+                    startedAt={timerStartedAt}
+                    completedAt={currentFlight.completedAt}
+                    isHost={false}
+                  />
+                </div>
+              )}
             </div>
           </CardHeader>
 
@@ -320,10 +402,10 @@ export default function SubmitGuesses() {
               <TabsList className="flex-wrap">
                 {currentFlight.wines.map((wine) => (
                   <TabsTrigger key={wine.id} value={wine.letterCode} className="flex items-center space-x-2">
-                    <span className="h-6 w-6 flex items-center justify-center bg-[#4C0519] text-white rounded-full text-sm font-medium">
+                    <span className="h-6 w-6 flex items-center justify-center bg-[#274E37] text-white rounded-full text-sm font-medium">
                       {wine.letterCode}
                     </span>
-                    <span>Wine {wine.letterCode}</span>
+                    <span>Wein {wine.letterCode}</span>
                   </TabsTrigger>
                 ))}
               </TabsList>
@@ -331,10 +413,10 @@ export default function SubmitGuesses() {
               {currentFlight.wines.map((wine) => (
                 <TabsContent key={wine.id} value={wine.letterCode} className="space-y-6">
                   <div className="bg-gray-50 rounded-lg p-4 flex items-center">
-                    <span className="h-10 w-10 flex items-center justify-center bg-[#4C0519] text-white rounded-full text-lg font-medium mr-3">
+                    <span className="h-10 w-10 flex items-center justify-center bg-[#274E37] text-white rounded-full text-lg font-medium mr-3">
                       {wine.letterCode}
                     </span>
-                    <h3 className="text-lg font-medium text-gray-900">Wine {wine.letterCode}</h3>
+                    <h3 className="text-lg font-medium text-gray-900">Wein {wine.letterCode}</h3>
                   </div>
 
                   <Form {...form}>
@@ -348,16 +430,15 @@ export default function SubmitGuesses() {
                               <FormItem>
                                 <FormLabel className="flex items-center">
                                   <Globe className="h-4 w-4 mr-2 text-muted-foreground" />
-                                  Country
+                                  Land
                                 </FormLabel>
                                 <Select onValueChange={field.onChange} value={field.value || ""}>
                                   <FormControl>
                                     <SelectTrigger>
-                                      <SelectValue placeholder="Select a country" />
+                                      <SelectValue placeholder="Land auswählen" />
                                     </SelectTrigger>
                                   </FormControl>
                                   <SelectContent>
-                                    <SelectItem value="">Select a country</SelectItem>
                                     {countries.map(country => (
                                       <SelectItem key={country} value={country}>{country}</SelectItem>
                                     ))}
@@ -384,11 +465,10 @@ export default function SubmitGuesses() {
                                 >
                                   <FormControl>
                                     <SelectTrigger>
-                                      <SelectValue placeholder="Select a region" />
+                                      <SelectValue placeholder="Region auswählen" />
                                     </SelectTrigger>
                                   </FormControl>
                                   <SelectContent>
-                                    <SelectItem value="">Select a region</SelectItem>
                                     {availableRegions.map(region => (
                                       <SelectItem key={region} value={region}>{region}</SelectItem>
                                     ))}
@@ -406,10 +486,10 @@ export default function SubmitGuesses() {
                               <FormItem>
                                 <FormLabel className="flex items-center">
                                   <Building className="h-4 w-4 mr-2 text-muted-foreground" />
-                                  Producer/Winery
+                                  Weingut
                                 </FormLabel>
                                 <FormControl>
-                                  <Input placeholder="e.g. Château Margaux" {...field} />
+                                  <Input placeholder="z. B. Château Margaux" {...field} />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
@@ -423,10 +503,10 @@ export default function SubmitGuesses() {
                               <FormItem>
                                 <FormLabel className="flex items-center">
                                   <Tag className="h-4 w-4 mr-2 text-muted-foreground" />
-                                  Wine Name
+                                  Weinname
                                 </FormLabel>
                                 <FormControl>
-                                  <Input placeholder="e.g. Grand Vin" {...field} />
+                                  <Input placeholder="z. B. Grand Vin" {...field} />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
@@ -435,48 +515,53 @@ export default function SubmitGuesses() {
                         </div>
 
                         <div className="space-y-4">
-                          <FormField
-                            control={form.control}
-                            name="vintage"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel className="flex items-center">
-                                  <Calendar className="h-4 w-4 mr-2 text-muted-foreground" />
-                                  Vintage
-                                </FormLabel>
-                                <Select onValueChange={field.onChange} value={field.value || ""}>
-                                  <FormControl>
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Select a year" />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent>
-                                    <SelectItem value="">Select a year</SelectItem>
-                                    {Array.from({ length: 30 }, (_, i) => new Date().getFullYear() - i).map(year => (
-                                      <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
+                          {(() => {
+                            const selectedWine = currentFlight?.wines.find(w => w.id === selectedWineId);
+                            const noVintage = selectedWine?.vintage?.toLowerCase() === "kein jahrgang";
+                            return (
+                              <FormField
+                                control={form.control}
+                                name="vintage"
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel className="flex items-center">
+                                      <Calendar className="h-4 w-4 mr-2 text-muted-foreground" />
+                                      Jahrgang
+                                    </FormLabel>
+                                    {noVintage ? (
+                                      <Input value="Kein Jahrgang" disabled />
+                                    ) : (
+                                      <FormControl>
+                                        <Input
+                                          placeholder="z. B. 2018"
+                                          value={field.value || ""}
+                                          onChange={(e) => {
+                                            const onlyDigits = e.target.value.replace(/[^0-9]/g, "").slice(0, 4);
+                                            field.onChange(onlyDigits);
+                                          }}
+                                          inputMode="numeric"
+                                          pattern="\\d{4}"
+                                          maxLength={4}
+                                        />
+                                      </FormControl>
+                                    )}
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            );
+                          })()}
 
                           <div>
                             <FormLabel className="flex items-center">
                               <Grape className="h-4 w-4 mr-2 text-muted-foreground" />
-                              Grape Varietals
+                              Rebsorten (max. 3)
                             </FormLabel>
-                            <Select onValueChange={addVarietal}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Add varietals" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {varietals.map(varietal => (
-                                  <SelectItem key={varietal} value={varietal}>{varietal}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <VarietalCombobox
+                              value={selectedVarietals}
+                              onChange={setSelectedVarietals}
+                              maxSelected={3}
+                            />
                             <div className="flex flex-wrap gap-2 mt-2">
                               {selectedVarietals.map(varietal => (
                                 <Badge key={varietal} variant="secondary" className="flex items-center gap-1">
@@ -496,7 +581,7 @@ export default function SubmitGuesses() {
                               <FormItem>
                                 <FormLabel className="flex items-center">
                                   <Star className="h-4 w-4 mr-2 text-muted-foreground" />
-                                  Your Rating (88-100)
+                                  Ihre Bewertung (88–100)
                                 </FormLabel>
                                 <FormControl>
                                   <Input 
@@ -509,7 +594,7 @@ export default function SubmitGuesses() {
                                   />
                                 </FormControl>
                                 <FormDescription>
-                                  Rate this wine on a scale from 88 to 100
+                                  Bewerten Sie diesen Wein auf einer Skala von 88 bis 100
                                 </FormDescription>
                                 <FormMessage />
                               </FormItem>
@@ -521,10 +606,10 @@ export default function SubmitGuesses() {
                             name="notes"
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel>Tasting Notes</FormLabel>
+                                <FormLabel>Verkostungsnotizen</FormLabel>
                                 <FormControl>
                                   <Textarea 
-                                    placeholder="Aromas of black cherry, tobacco and cedar..." 
+                                    placeholder="Aromen von Schwarzkirsche, Tabak und Zeder..." 
                                     rows={2}
                                     {...field} 
                                   />
@@ -542,16 +627,16 @@ export default function SubmitGuesses() {
                           variant="outline"
                           onClick={handleFinish}
                         >
-                          Return to Tasting
+                          Zurück zur Verkostung
                         </Button>
                         <Button 
                           type="submit" 
-                          className="bg-[#4C0519] hover:bg-[#3A0413]"
+                          className="bg-[#274E37] hover:bg-[#e65b2d]"
                           disabled={submitGuessMutation.isPending}
                         >
                           {submitGuessMutation.isPending 
-                            ? "Submitting..." 
-                            : `Submit Guess for Wine ${wine.letterCode}`}
+                            ? "Senden..." 
+                            : `Tipp für Wein ${wine.letterCode} senden`}
                         </Button>
                       </div>
                     </form>

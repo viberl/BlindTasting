@@ -1,13 +1,10 @@
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, UseQueryOptions } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { 
   Tasting,
-  Flight,
-  Wine,
-  InsertFlight,
-  InsertWine
+  Wine
 } from "@shared/schema";
 import {
   Card,
@@ -18,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import {
   Accordion,
@@ -25,20 +23,23 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Loader2, Plus, Clock, Wine as WineIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import WineForm from "@/components/wine/wine-form";
 import WineCard from "@/components/wine/wine-card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+
+interface Flight {
+  id: number;
+  name: string;
+  completedAt: Date | null;
+  tastingId: number;
+  orderIndex: number;
+  timeLimit: number;
+  startedAt: Date | null;
+  wines: Wine[];
+}
 
 export default function WinesSetup() {
   const { id } = useParams<{ id: string }>();
@@ -48,33 +49,47 @@ export default function WinesSetup() {
   
   const [newFlightName, setNewFlightName] = useState("");
   const [newFlightTimeLimit, setNewFlightTimeLimit] = useState("10");
-  const [addFlightDialogOpen, setAddFlightDialogOpen] = useState(false);
   const [activeFlightId, setActiveFlightId] = useState<number | null>(null);
   const [addWineDialogOpen, setAddWineDialogOpen] = useState(false);
+  const [addFlightDialogOpen, setAddFlightDialogOpen] = useState(false);
 
   const { data: tasting, isLoading: tastingLoading } = useQuery<Tasting>({
     queryKey: [`/api/tastings/${tastingId}`],
   });
 
-  const { data: flights, isLoading: flightsLoading, refetch: refetchFlights } = useQuery<Flight[]>({
-    queryKey: [`/api/tastings/${tastingId}/flights`],
-    onSuccess: (data) => {
-      if (data.length > 0 && !activeFlightId) {
+  const fetchFlights = async (tastingId: number) => {
+    const res = await fetch(`/api/tastings/${tastingId}/flights`);
+    if (!res.ok) throw new Error('Failed to fetch flights');
+    return res.json();
+  };
+
+  const flightsQueryOptions = {
+    queryKey: ['flights', tastingId],
+    queryFn: () => fetchFlights(tastingId),
+    onSettled: (data: Flight[] | undefined, error: Error | null) => {
+      if (error) {
+        toast({
+          title: 'Fehler beim Laden der Flights',
+          description: error.message,
+          variant: 'destructive'
+        });
+      } else if (data && data.length > 0 && !activeFlightId) {
         setActiveFlightId(data[0].id);
       }
     },
-    refetchInterval: 3000, // Aktualisiert die Flights automatisch alle 3 Sekunden
-  });
+    refetchInterval: 3000
+  } as UseQueryOptions<Flight[], Error> & { onSettled?: (data: Flight[] | undefined, error: Error | null) => void };
+
+  const { data: flights, isLoading: flightsLoading, refetch: refetchFlights } = useQuery(flightsQueryOptions);
 
   const createFlightMutation = useMutation({
-    mutationFn: async (flightData: InsertFlight) => {
+    mutationFn: async (flightData: { tastingId: number; name: string; orderIndex: number; timeLimit: number }) => {
       const res = await apiRequest("POST", `/api/tastings/${tastingId}/flights`, flightData);
       return res.json();
     },
-    onSuccess: (newFlight) => {
-      queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
+    onSuccess: (newFlight: Flight) => {
+      queryClient.invalidateQueries({ queryKey: ['flights', tastingId] });
       setActiveFlightId(newFlight.id);
-      setAddFlightDialogOpen(false);
       setNewFlightName("");
       setNewFlightTimeLimit("10");
       toast({
@@ -92,12 +107,12 @@ export default function WinesSetup() {
   });
 
   const addWineMutation = useMutation({
-    mutationFn: async (wineData: Omit<InsertWine, "letterCode">) => {
+    mutationFn: async (wineData: { flightId: number; name: string; description: string }) => {
       const res = await apiRequest("POST", `/api/flights/${wineData.flightId}/wines`, wineData);
       return res.json();
     },
-    onSuccess: (newWine) => {
-      queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
+    onSuccess: (newWine: Wine) => {
+      queryClient.invalidateQueries({ queryKey: ['flights', tastingId] });
       // Sofortiges Nachladen der Daten erzwingen
       setTimeout(() => refetchFlights(), 300);
       setAddWineDialogOpen(false);
@@ -135,7 +150,7 @@ export default function WinesSetup() {
     });
   };
 
-  const handleAddWine = (wineData: Omit<InsertWine, "letterCode">) => {
+  const handleAddWine = (wineData: { flightId: number; name: string; description: string }) => {
     addWineMutation.mutate(wineData);
     // Dialog zuerst schließen, dann nach erfolgreichem Hinzufügen des Weins neu laden
     setAddWineDialogOpen(false);
@@ -153,7 +168,7 @@ export default function WinesSetup() {
   if (tastingLoading || flightsLoading) {
     return (
       <div className="flex items-center justify-center h-[50vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-[#4C0519]" />
+        <Loader2 className="h-8 w-8 animate-spin text-[#274E37]" />
       </div>
     );
   }
@@ -185,7 +200,7 @@ export default function WinesSetup() {
           <CardHeader className="border-b bg-gray-50 rounded-t-lg">
             <div className="flex justify-between items-center">
               <div>
-                <CardTitle className="text-2xl font-display text-[#4C0519]">Add Wines to Flights</CardTitle>
+                <CardTitle className="text-2xl font-display text-[#274E37]">Add Wines to Flights</CardTitle>
                 <CardDescription>
                   Create flights and add wines for your tasting: "{tasting.name}"
                 </CardDescription>
@@ -193,7 +208,7 @@ export default function WinesSetup() {
               <div className="flex items-center space-x-2">
                 <div className="w-8 h-8 rounded-full bg-gray-300 text-gray-600 flex items-center justify-center">1</div>
                 <div className="w-8 h-8 rounded-full bg-gray-300 text-gray-600 flex items-center justify-center">2</div>
-                <div className="w-8 h-8 rounded-full bg-[#4C0519] text-white flex items-center justify-center">3</div>
+                <div className="w-8 h-8 rounded-full bg-[#274E37] text-white flex items-center justify-center">3</div>
                 <span className="text-xs text-gray-500 hidden sm:inline">Wines</span>
               </div>
             </div>
@@ -202,65 +217,14 @@ export default function WinesSetup() {
           <CardContent className="py-6">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-medium">Flights</h3>
-              <Dialog open={addFlightDialogOpen} onOpenChange={setAddFlightDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" className="flex items-center">
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Flight
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Add a New Flight</DialogTitle>
-                    <DialogDescription>
-                      Create a new flight of wines for tasters to identify.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <label htmlFor="flight-name" className="text-sm font-medium">
-                        Flight Name
-                      </label>
-                      <Input
-                        id="flight-name"
-                        placeholder="e.g. Reds from France"
-                        value={newFlightName}
-                        onChange={(e) => setNewFlightName(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label htmlFor="time-limit" className="text-sm font-medium flex items-center">
-                        <Clock className="h-4 w-4 mr-1" />
-                        Time Limit (minutes)
-                      </label>
-                      <Input
-                        id="time-limit"
-                        type="number"
-                        min="1"
-                        max="60"
-                        placeholder="10"
-                        value={newFlightTimeLimit}
-                        onChange={(e) => setNewFlightTimeLimit(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button
-                      variant="outline"
-                      onClick={() => setAddFlightDialogOpen(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button 
-                      onClick={handleCreateFlight}
-                      disabled={createFlightMutation.isPending}
-                      className="bg-[#4C0519] hover:bg-[#3A0413]"
-                    >
-                      {createFlightMutation.isPending ? "Creating..." : "Create Flight"}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+              <Button 
+                variant="outline" 
+                className="flex items-center"
+                onClick={() => setAddFlightDialogOpen(true)}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Flight
+              </Button>
             </div>
 
             {flights && flights.length > 0 ? (
@@ -275,7 +239,7 @@ export default function WinesSetup() {
                     <AccordionItem key={flight.id} value={flight.id.toString()}>
                       <AccordionTrigger className="hover:bg-gray-50 px-4 rounded-md">
                         <div className="flex items-center">
-                          <div className="h-6 w-6 rounded-full bg-[#4C0519] text-white flex items-center justify-center text-sm mr-3">
+                          <div className="h-6 w-6 rounded-full bg-[#274E37] text-white flex items-center justify-center text-sm mr-3">
                             {index + 1}
                           </div>
                           <div className="text-left">
@@ -290,41 +254,15 @@ export default function WinesSetup() {
                         <div className="space-y-4">
                           <div className="flex justify-between items-center">
                             <h4 className="font-medium">Wines in this flight</h4>
-                            <Dialog 
-                              open={addWineDialogOpen} 
-                              onOpenChange={(open) => {
-                                setAddWineDialogOpen(open);
-                                // Wenn Dialog geschlossen wird, sofort Flight neu laden
-                                if (!open) {
-                                  setTimeout(() => refetchFlights(), 300);
-                                }
-                              }}
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              className="flex items-center"
+                              onClick={() => setAddWineDialogOpen(true)}
                             >
-                              <DialogTrigger asChild>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline"
-                                  className="flex items-center"
-                                >
-                                  <Plus className="h-4 w-4 mr-2" />
-                                  Wein hinzufügen
-                                </Button>
-                              </DialogTrigger>
-                              <DialogContent className="max-w-3xl">
-                                <DialogHeader>
-                                  <DialogTitle>Wein zum Flight hinzufügen</DialogTitle>
-                                  <DialogDescription>
-                                    Fügen Sie einen neuen Wein zu "{flight.name}" hinzu. Sie können in der Vinaturel-Datenbank suchen oder einen eigenen Wein anlegen.
-                                  </DialogDescription>
-                                </DialogHeader>
-                                
-                                <WineForm 
-                                  flightId={flight.id} 
-                                  onSubmit={handleAddWine}
-                                  isSubmitting={addWineMutation.isPending}
-                                />
-                              </DialogContent>
-                            </Dialog>
+                              <Plus className="h-4 w-4 mr-2" />
+                              Wein hinzufügen
+                            </Button>
                           </div>
 
                           {flight.wines && flight.wines.length > 0 ? (
@@ -366,7 +304,7 @@ export default function WinesSetup() {
                 </p>
                 <Button 
                   onClick={() => setAddFlightDialogOpen(true)}
-                  className="bg-[#4C0519] hover:bg-[#3A0413]"
+                  className="bg-[#274E37] hover:bg-[#e65b2d]"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Create Your First Flight
@@ -384,7 +322,7 @@ export default function WinesSetup() {
               Back
             </Button>
             <Button
-              className="bg-[#4C0519] hover:bg-[#3A0413]"
+              className="bg-[#274E37] hover:bg-[#e65b2d]"
               onClick={handleFinish}
               disabled={!flights || flights.length === 0 || flights.some(f => !f.wines || f.wines.length === 0)}
             >
@@ -393,6 +331,48 @@ export default function WinesSetup() {
           </CardFooter>
         </Card>
       </div>
+      <Dialog open={addFlightDialogOpen} onOpenChange={setAddFlightDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Neuen Flight erstellen</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="flightName" className="text-right">
+                Name
+              </Label>
+              <Input
+                id="flightName"
+                value={newFlightName}
+                onChange={(e) => setNewFlightName(e.target.value)}
+                className="col-span-3"
+              />
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="flightTimeLimit" className="text-right">
+                Zeitlimit (Minuten)
+              </Label>
+              <Input
+                id="flightTimeLimit"
+                type="number"
+                value={newFlightTimeLimit}
+                onChange={(e) => setNewFlightTimeLimit(e.target.value)}
+                className="col-span-3"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button 
+              onClick={async () => {
+                await handleCreateFlight();
+                setAddFlightDialogOpen(false);
+              }}
+            >
+              Erstellen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,0 +1,480 @@
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import { vinaturelWines } from '../../db/schema';
+import axios from 'axios';
+import dotenv from 'dotenv';
+import * as path from 'path';
+
+// Load environment variables from the project root
+const envPath = path.resolve(process.cwd(), '.env');
+dotenv.config({ path: envPath });
+
+// Database connection
+const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/blindtasting';
+const client = postgres(connectionString);
+const db = drizzle(client);
+
+// Define the wine data type
+interface WineData {
+  id?: string;
+  producer: string;
+  name: string;
+  country: string;
+  region: string;
+  vintage: number;
+  varietals: string[];
+  externalId: string;
+  articleNumber: string;
+  productUrl: string | null;
+  imageUrl: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+class VinaturelImporter {
+  private static readonly API_BASE_URL = 'https://vinaturel.de/store-api';
+  private static readonly API_KEY = 'SWSCT5QYLV9K9CQMJ_XI1Q176W'; // Directly using the API key for testing
+  private static readonly BATCH_SIZE = 5; // Reduced batch size
+
+  public static async testConnection(): Promise<boolean> {
+    try {
+      console.log('Testing API connection...');
+      const response = await axios.get(
+        `${this.API_BASE_URL}/product`,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'sw-access-key': this.API_KEY || ''
+          },
+          params: { limit: 1 },
+          validateStatus: () => true
+        }
+      );
+
+      if (response.status === 200) {
+        console.log('✅ API connection successful!');
+        return true;
+      } else {
+        console.error('❌ API connection failed:', response.status, response.statusText);
+        return false;
+      }
+    } catch (error) {
+      console.error('Error testing API connection:', error);
+      return false;
+    }
+  }
+
+  private static extractVarietals(properties: any[]): string[] {
+    if (!properties || !Array.isArray(properties)) return [];
+    
+    const varietals: string[] = [];
+    
+    for (const prop of properties) {
+      if (prop?.name?.toLowerCase().includes('rebsorte')) {
+        const value = prop.value || prop.name;
+        if (value && typeof value === 'string') {
+          varietals.push(value);
+        }
+      }
+    }
+    
+    return varietals;
+  }
+
+  private static async makeRequestWithRetry(url: string, config: any, retries = 3, delay = 1000): Promise<any> {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        console.log(`Attempt ${attempt} of ${retries} to ${url}`);
+        const response = await axios.get(url, {
+          ...config,
+          validateStatus: () => true // Always resolve, never throw
+        });
+
+        if (response.status === 200) {
+          return response;
+        }
+
+        console.warn(`Attempt ${attempt} failed with status ${response.status}: ${response.statusText}`);
+        if (response.data) {
+          console.warn('Response data:', JSON.stringify(response.data, null, 2));
+        }
+
+        if (attempt < retries) {
+          const waitTime = delay * attempt;
+          console.log(`Retrying in ${waitTime}ms...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error(`Attempt ${attempt} error:`, errorMessage);
+        if (attempt === retries) throw error;
+        const waitTime = delay * attempt;
+        console.log(`Retrying in ${waitTime}ms...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    }
+    throw new Error(`All ${retries} attempts failed`);
+  }
+
+  private static async makeApiRequest(page: number, limit: number, retries = 3, delay = 1000): Promise<any> {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const requestConfig = {
+          headers: {
+            'Content-Type': 'application/json',
+            'sw-access-key': VinaturelImporter.API_KEY,
+            'Accept': 'application/json',
+            'User-Agent': 'axios/1.9.0'
+          },
+          params: {
+            limit,
+            page
+          },
+          validateStatus: (status: number) => true, // Always resolve to handle all status codes
+          timeout: 30000
+        };
+
+        console.log(`Attempt ${attempt}/${retries} - Making request - Page: ${page}, Limit: ${limit}`);
+        console.log('Request URL:', `${VinaturelImporter.API_BASE_URL}/product`);
+        
+        const response = await axios.get(
+          `${VinaturelImporter.API_BASE_URL}/product`,
+          requestConfig
+        );
+        
+        console.log(`Response status: ${response.status} ${response.statusText}`);
+        
+        if (response.status >= 200 && response.status < 300) {
+          console.log('Request successful!');
+          return response;
+        } else if (response.status === 429) {
+          // Rate limited - wait and retry
+          const retryAfter = response.headers['retry-after'] || delay;
+          console.warn(`Rate limited. Waiting ${retryAfter}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, Number(retryAfter) * 1000));
+          continue;
+        } else if (response.status >= 500) {
+          console.error('Server error:', response.statusText);
+          if (response.data) {
+            console.error('Error details:', JSON.stringify(response.data, null, 2));
+          }
+          if (attempt < retries) {
+            await new Promise(resolve => setTimeout(resolve, delay * attempt));
+            continue;
+          }
+        }
+        
+        // If we get here, it's a client error that won't be fixed by retrying
+        throw new Error(`API request failed with status ${response.status}: ${response.statusText}`);
+        
+      } catch (error: any) {
+        console.error(`Attempt ${attempt} failed:`, error.message);
+        if (attempt === retries) {
+          if (error.response) {
+            console.error('Response data:', error.response.data);
+            console.error('Response headers:', error.response.headers);
+          } else if (error.request) {
+            console.error('No response received:', error.request);
+          }
+          throw error;
+        }
+        
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, delay * attempt));
+      }
+    }
+    
+    throw new Error(`All ${retries} attempts failed`);
+  }
+
+  private static async processProducts(products: any[]): Promise<void> {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error('DATABASE_URL environment variable is not set');
+    }
+    
+    const client = postgres(connectionString);
+    const db = drizzle(client);
+    
+    try {
+      for (const product of products) {
+        try {
+          // Extract varietals from properties if available
+          const varietals = this.extractVarietals(product.properties || []);
+          
+          const productData = {
+            externalId: product.id,
+            articleNumber: product.productNumber || '',
+            producer: product.manufacturer?.name || 'Unbekannt',
+            name: product.name || 'Unbenannt',
+            country: product.country?.name || 'Unbekannt',
+            region: product.customFields?.region || 'Unbekannt',
+            vintage: product.releaseDate?.substring(0, 4) 
+              ? parseInt(product.releaseDate.substring(0, 4)) 
+              : new Date().getFullYear(),
+            varietal_1: varietals[0] || null,
+            varietal_2: varietals[1] || null,
+            varietal_3: varietals[2] || null,
+            productUrl: product.seoUrls?.[0]?.seoPathInfo 
+              ? `https://vinaturel.de/detail/${product.seoUrls[0].seoPathInfo}` 
+              : null,
+            imageUrl: product.cover?.url || null,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
+
+          const wineData = {
+            // id is auto-generated by the database
+            externalId: productData.externalId,
+            name: productData.name,
+            producer: productData.producer,
+            country: productData.country,
+            region: productData.region,
+            vintage: productData.vintage,
+            articleNumber: productData.articleNumber || null,
+            varietal1: productData.varietal_1 || null,
+            varietal2: productData.varietal_2 || null,
+            varietal3: productData.varietal_3 || null,
+            productUrl: productData.productUrl || null,
+            imageUrl: productData.imageUrl || null,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
+
+          await db.insert(vinaturelWines)
+            .values(wineData)
+            .onConflictDoUpdate({
+              target: vinaturelWines.externalId,
+              set: {
+                name: wineData.name,
+                producer: wineData.producer,
+                country: wineData.country,
+                region: wineData.region,
+                vintage: wineData.vintage,
+                articleNumber: wineData.articleNumber,
+                varietal1: wineData.varietal1,
+                varietal2: wineData.varietal2,
+                varietal3: wineData.varietal3,
+                productUrl: wineData.productUrl,
+                imageUrl: wineData.imageUrl,
+                updatedAt: wineData.updatedAt
+              }
+            });
+        } catch (error) {
+          console.error('Error processing product:', product.id, error);
+        }
+      }
+    } catch (error) {
+      console.error('Error processing products:', error);
+      throw error;
+    } finally {
+      await client.end();
+    }
+  }
+
+  public static async importWines() {
+    if (!VinaturelImporter.API_KEY) {
+      console.error('❌ VINATUREL_API_KEY is not set');
+      console.log('Current working directory:', process.cwd());
+      console.log('Environment variables:', Object.keys(process.env).filter(k => k.includes('VINATUREL')));
+      process.exit(1);
+    }
+    
+    // Test connection first
+    const connected = await VinaturelImporter.testConnection();
+    if (!connected) {
+      console.error('❌ Failed to connect to API. Exiting.');
+      process.exit(1);
+    }
+
+    try {
+      console.log('🚀 Starting product import...');
+      
+      let page = 1;
+      const limit = 100; // Max items per page
+      let totalImported = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        console.log(`\n📄 Fetching page ${page}...`);
+        
+        const response = await this.makeApiRequest(page, limit);
+        const products = response.data?.elements || [];
+        
+        if (products.length === 0) {
+          console.log('No more products found.');
+          hasMore = false;
+          break;
+        }
+
+        console.log(`✅ Fetched ${products.length} products from page ${page}`);
+        
+        // Process the current batch of products
+        await this.processProducts(products);
+        totalImported += products.length;
+        
+        console.log(`📊 Total imported so far: ${totalImported}`);
+        
+        // Add a small delay between pages to be gentle on the API
+        if (products.length === limit) {
+          page++;
+          await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+        } else {
+          hasMore = false;
+        }
+      }
+      
+      console.log(`\n🎉 Import completed! Total products imported: ${totalImported}`);
+      
+    } catch (error: any) {
+      console.error('❌ Error during import:', error.message);
+      if (error.response) {
+        console.error('Response data:', error.response.data);
+        console.error('Response status:', error.response.status);
+      }
+      process.exit(1);
+    }
+  }
+
+  private static async makeApiRequest(page: number, limit: number) {
+    const requestConfig = {
+      headers: {
+        'Content-Type': 'application/json',
+        'sw-access-key': VinaturelImporter.API_KEY,
+        'Accept': 'application/json',
+        'User-Agent': 'axios/1.9.0'
+      },
+      params: {
+            limit,
+            page
+          },
+          timeout: 30000
+        };
+
+        console.log(`Making request - Page: ${page}, Limit: ${limit}`);
+        console.log('Request URL:', `${VinaturelImporter.API_BASE_URL}/product`);
+        
+        try {
+          const response = await axios.get(
+            `${VinaturelImporter.API_BASE_URL}/product`,
+            requestConfig
+          );
+          
+          console.log('Request successful!');
+          console.log('Response status:', response.status);
+          
+          if (response.data) {
+            console.log('Response data keys:', Object.keys(response.data));
+            return response;
+          } else {
+            throw new Error('Empty response data');
+          }
+        } catch (error: unknown) {
+          console.error('Request failed:');
+          if (error && typeof error === 'object') {
+            const axiosError = error as {
+              response?: { status: number; headers: any; data: any };
+              request?: any;
+              message?: string;
+            };
+            
+            if (axiosError.response) {
+              console.error('Status:', axiosError.response.status);
+              console.error('Headers:', axiosError.response.headers);
+              console.error('Response data:', axiosError.response.data);
+            } else if (axiosError.request) {
+              console.error('No response received:', axiosError.request);
+            } else if (axiosError.message) {
+              console.error('Error:', axiosError.message);
+            }
+          } else {
+            console.error('Unknown error occurred:', error);
+          }
+          throw error;
+        }
+      };
+      
+      try {
+        const pageSize = 100; // Number of products per page
+        let currentPage = 1;
+        let totalImported = 0;
+        
+        // Start with a small request to test the connection and get total count
+        const testResponse = await this.makeApiRequest(1, 1);
+        console.log('Test request successful!');
+        
+        // Make first request to get total count and first page
+        const firstPageResponse = await this.makeApiRequest(currentPage, pageSize);
+        
+        if (!firstPageResponse.data?.elements) {
+          console.log('No products found in response');
+          return 0;
+        }
+        
+        const totalProducts = firstPageResponse.data.total || 0;
+        console.log(`Found ${totalProducts} total products`);
+        
+        if (totalProducts === 0) {
+          console.log('No products to import');
+          return 0;
+        }
+        
+        // Process first page
+        const firstPageProducts = firstPageResponse.data.elements;
+        await this.processProducts(firstPageProducts);
+        totalImported += firstPageProducts.length;
+        console.log(`Processed page ${currentPage}, imported ${totalImported} products so far...`);
+        
+        // Calculate total pages
+        const totalPages = Math.ceil(totalProducts / pageSize);
+        
+        // Process remaining pages
+        for (currentPage = 2; currentPage <= totalPages; currentPage++) {
+          try {
+            console.log(`Processing page ${currentPage} of ${totalPages}...`);
+            const response = await this.makeApiRequest(currentPage, pageSize);
+            
+            if (response.data?.elements?.length > 0) {
+              await this.processProducts(response.data.elements);
+              totalImported += response.data.elements.length;
+              console.log(`Processed page ${currentPage}, imported ${totalImported} products so far...`);
+            }
+            
+            // Add a small delay between pages to be gentle on the API
+            await new Promise(resolve => setTimeout(resolve, 500));
+          } catch (error) {
+            console.error(`Error processing page ${currentPage}:`, error);
+            // Continue with next page even if one fails
+            continue;
+          }
+        }
+        
+        console.log(`✅ Successfully imported/updated ${totalImported} wines`);
+        return totalImported;
+      } catch (error) {
+        console.error('Failed to import wines:', error);
+        throw error;
+      }
+    } catch (error) {
+      console.error('Error in importWines:', error);
+      throw error;
+    }
+  }
+}
+
+// Run the importer
+async function main() {
+  try {
+    await VinaturelImporter.importWines();
+    console.log('✅ Script completed successfully');
+    process.exit(0);
+  } catch (error) {
+    console.error('❌ Script failed:', error);
+    process.exit(1);
+  }
+}
+
+main().catch(error => {
+  console.error('Unhandled error in main:', error);
+  process.exit(1);
+});

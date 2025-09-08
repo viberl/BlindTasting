@@ -1,6 +1,17 @@
 import { useParams } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { Loader2, Wine, Clock, AlarmClock, X, Users, User, Trophy } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+
+import { Loader2, Wine, Clock, AlarmClock, X, Users, Trophy, User as UserIcon } from "lucide-react";
+
+// Typdefinitionen
+interface User {
+  id: number;
+  email: string;
+  name: string;
+  company?: string;
+  profileImage?: string;
+  createdAt: string;
+}
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast, useToast } from "@/hooks/use-toast";
@@ -9,17 +20,35 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useState, useEffect } from "react";
+import { Input } from "@/components/ui/input";
+
+interface Participant {
+  id: number;
+  userId: number;
+  tastingId: number;
+  name?: string;
+  score?: number;
+  user?: {
+    id: number;
+    name: string;
+    email: string;
+    company?: string;
+    profileImage?: string;
+  };
+}
 
 // Dialoge für Erstellung von Flights und Hinzufügen von Weinen
-import CreateFlightDialog from "@/components/flight/create-flight-dialog";
 import AddWineDialog from "@/components/wine/add-wine-dialog";
 import SetTimerDialog from "@/components/flight/set-timer-dialog";
+import CreateFlightDialog from "@/components/flight/create-flight-dialog";
 
 // Definiere Typen für unsere Daten
 interface Tasting {
   id: number;
   name: string;
   hostId: number;
+  hostName: string;
+  hostCompany: string | null;
   isPublic: boolean;
   status: string;
   createdAt: string;
@@ -55,11 +84,145 @@ export default function TastingDetailPage() {
   const tastingId = parseInt(id);
   const { user } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [inviteEmail, setInviteEmail] = useState("");
+
+  // Typ für Teilnehmer mit Benutzerdaten
+  interface ParticipantWithUser extends Participant {
+    user: User;
+    isHost: boolean;
+  }
+
+  // Teilnehmer laden
+  const { data: participants = [], isLoading: isParticipantsLoading, refetch: refetchParticipants } = useQuery<ParticipantWithUser[]>({
+    queryKey: [`/api/tastings/${tastingId}/participants`],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/tastings/${tastingId}/participants`);
+      if (!res.ok) {
+        throw new Error('Fehler beim Laden der Teilnehmer');
+      }
+      const data = await res.json();
+      return data;
+    },
+    enabled: !isNaN(tastingId),
+  });
+
+  // WebSocket-Verbindung für Echtzeit-Updates
+  useEffect(() => {
+    if (!tastingId || isNaN(tastingId)) return;
+
+    let ws: WebSocket;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+    const reconnectDelay = 1000; // 1 Sekunde
+
+    const connectWebSocket = () => {
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      ws = new WebSocket(
+        `${protocol}://${window.location.host}/ws/join?t=${tastingId}&host=true`
+      );
+
+      ws.onopen = () => {
+        console.log('WebSocket-Verbindung hergestellt');
+        reconnectAttempts = 0; // Reset der Verbindungsversuche bei erfolgreicher Verbindung
+      };
+
+      ws.onmessage = async (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('WebSocket message received:', data);
+          
+          // Reagiere auf verschiedene Nachrichtentypen
+          if (data.type === 'participants_updated' || 
+              data.type === 'participant_joined' || 
+              data.type === 'participant_removed') {
+            
+            console.log('Aktualisiere Teilnehmerliste...');
+            
+            // Verwende queryClient direkt, um die Daten zu aktualisieren
+            queryClient.invalidateQueries({ 
+              queryKey: [`/api/tastings/${tastingId}/participants`] 
+            }).then(() => {
+              console.log('Teilnehmerliste erfolgreich aktualisiert');
+              
+              // Zeige eine Benachrichtigung an, wenn ein neuer Teilnehmer beigetreten ist
+              if ((data.type === 'participant_joined' || data.type === 'participants_updated') && data.newParticipant) {
+                const participantName = data.newParticipant.user?.name || 'Ein neuer Teilnehmer';
+                toast({
+                  title: "Neuer Teilnehmer",
+                  description: `${participantName} ist der Verkostung beigetreten`,
+                  variant: "default"
+                });
+              }
+            }).catch(error => {
+              console.error('Fehler beim Aktualisieren der Teilnehmerliste:', error);
+            });
+          }
+        } catch (e) {
+          console.error('Fehler beim Verarbeiten der WebSocket-Nachricht:', e);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket Fehler:', error);
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket-Verbindung geschlossen, versuche erneut zu verbinden...');
+        if (reconnectAttempts < maxReconnectAttempts) {
+          reconnectAttempts++;
+          setTimeout(connectWebSocket, reconnectDelay * reconnectAttempts);
+        }
+      };
+    };
+
+    // Initiale Verbindung herstellen
+    connectWebSocket();
+
+    // Cleanup-Funktion
+    return () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
+    };
+  }, [tastingId, refetchParticipants, toast]);
+
+  // Teilnehmer entfernen
+  const removeParticipantMutation = useMutation({
+    mutationFn: async (userId: number) => {
+      const response = await apiRequest("DELETE", `/api/tastings/${tastingId}/participants/${userId}`);
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Fehler beim Entfernen des Teilnehmers');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      // Die WebSocket-Nachricht wird die Liste aktualisieren
+      toast({
+        title: "Teilnehmer entfernt",
+        description: "Der Teilnehmer wurde erfolgreich aus der Verkostung entfernt.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Fehler",
+        description: `Fehler beim Entfernen des Teilnehmers: ${(error as Error).message}`,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleRemoveParticipant = (userId: number) => {
+    if (window.confirm("Möchten Sie diesen Teilnehmer wirklich aus der Verkostung entfernen?")) {
+      removeParticipantMutation.mutate(userId);
+    }
+  };
   
   // State für Dialoge
-  const [createFlightOpen, setCreateFlightOpen] = useState(false);
   const [addWineDialogOpen, setAddWineDialogOpen] = useState(false);
   const [setTimerDialogOpen, setSetTimerDialogOpen] = useState(false);
+  const [createFlightDialogOpen, setCreateFlightDialogOpen] = useState(false);
   const [selectedFlightId, setSelectedFlightId] = useState<number | null>(null);
   
   // State für Timer-Countdown
@@ -88,15 +251,63 @@ export default function TastingDetailPage() {
     enabled: !isNaN(tastingId),
   });
 
-  // Lade Flights für diese Verkostung
-  const { data: flights, isLoading: isFlightsLoading } = useQuery<Flight[]>({
+  // Flights-Query mit Debug-Log
+  const { data: flights, isLoading: isFlightsLoading, refetch: refetchFlights } = useQuery<Flight[]>({
     queryKey: [`/api/tastings/${tastingId}/flights`],
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/tastings/${tastingId}/flights`);
-      return res.json();
+      const data = await res.json();
+      console.log('API /flights result:', data);
+      return data;
     },
     enabled: !isNaN(tastingId) && !!tasting,
+    staleTime: 0, // Immer sofort neu laden!
   });
+
+  // Einladungen laden
+  type Invite = { tastingId: number; email: string; role: string };
+  const { data: invites = [], refetch: refetchInvites } = useQuery<Invite[]>({
+    queryKey: ["invites", tastingId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/tastings/${tastingId}/invites`);
+      return res.json();
+    },
+    enabled: !isNaN(tastingId),
+  });
+
+  const addInviteMutation = useMutation({
+    mutationFn: async (email: string) => {
+      const res = await apiRequest("POST", `/api/tastings/${tastingId}/invites`, { email });
+      return res.json();
+    },
+    onSuccess: async () => {
+      await refetchInvites();
+      setInviteEmail("");
+      toast({ title: "Einladung hinzugefügt" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Fehler", description: e.message, variant: "destructive" });
+    }
+  });
+
+  const removeInviteMutation = useMutation({
+    mutationFn: async (email: string) => {
+      const res = await apiRequest("DELETE", `/api/tastings/${tastingId}/invites/${encodeURIComponent(email)}`);
+      return res.json();
+    },
+    onSuccess: async () => {
+      await refetchInvites();
+      toast({ title: "Einladung entfernt" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Fehler", description: e.message, variant: "destructive" });
+    }
+  });
+
+  // Logge Flights nach jedem Update
+  useEffect(() => {
+    console.log('Flights in UI:', flights);
+  }, [flights]);
   
   // Timer-Effekt für aktive Flights
   useEffect(() => {
@@ -199,6 +410,14 @@ export default function TastingDetailPage() {
     setSetTimerDialogOpen(true);
   };
   
+  // Nach dem Hinzufügen eines Weins Flights mit Delay refetchen
+  const handleWineAdded = () => {
+    setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
+    }, 300);
+    setAddWineDialogOpen(false);
+  };
+  
   // Punktesystem-Handler
   const handlePointsChange = (field: string, value: number) => {
     setPointsConfiguration(prev => ({
@@ -258,16 +477,22 @@ export default function TastingDetailPage() {
   };
 
   // Statusänderung der Verkostung
-  const updateTastingStatus = async (status: string) => {
+  const updateTastingStatus = async (status: 'draft' | 'active' | 'started') => {
     try {
       const res = await apiRequest("PATCH", `/api/tastings/${tastingId}/status`, { status });
       const updatedTasting = await res.json();
       
+      // Invalidate queries to refresh data
+      queryClient.invalidateQueries({queryKey: ["/api/tastings"]});
       queryClient.invalidateQueries({queryKey: [`/api/tastings/${tastingId}`]});
       
       toast({
         title: "Status aktualisiert",
-        description: `Die Verkostung ist jetzt ${status === 'active' ? 'aktiv' : status === 'completed' ? 'abgeschlossen' : 'im Entwurfsmodus'}.`,
+        description: status === 'active' 
+          ? "Die Verkostung wurde veröffentlicht und ist jetzt aktiv"
+          : status === 'started'
+          ? "Die Verkostung wurde gestartet"
+          : "Die Verkostung wurde zurück in den Entwurfsmodus gesetzt",
       });
       
       return updatedTasting;
@@ -280,10 +505,43 @@ export default function TastingDetailPage() {
     }
   };
 
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [isStartingFlight, setIsStartingFlight] = useState(false);
+
+  const startNextFlight = async () => {
+    setIsStartingFlight(true);
+    try {
+      // Finde den nächsten nicht gestarteten und nicht abgeschlossenen Flight
+      const nextFlight = (flights || []).find(f => !f.startedAt && !f.completedAt);
+      if (!nextFlight) {
+        toast({ title: 'Kein startbarer Flight', description: 'Es gibt keinen weiteren ungestarteten Flight.' });
+        return;
+      }
+
+      // Starte den Flight
+      const res = await fetch(`/api/flights/${nextFlight.id}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(body || 'Flight konnte nicht gestartet werden');
+      }
+
+      toast({ title: 'Flight gestartet', description: `${nextFlight.name || 'Nächster Flight'} wurde gestartet.` });
+      await queryClient.invalidateQueries({ queryKey: ['flights', tastingId] });
+    } catch (e: any) {
+      toast({ title: 'Fehler', description: e.message || 'Flight Start fehlgeschlagen', variant: 'destructive' });
+    } finally {
+      setIsStartingFlight(false);
+    }
+  };
+
   if (isTastingLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="h-8 w-8 animate-spin text-[#4C0519]" />
+        <Loader2 className="h-8 w-8 animate-spin text-[#274E37]" />
       </div>
     );
   }
@@ -301,7 +559,7 @@ export default function TastingDetailPage() {
           <CardContent className="pt-6">
             <p>Die Verkostung konnte nicht geladen werden. Bitte versuchen Sie es später erneut.</p>
             <Button 
-              className="mt-4 bg-[#4C0519] hover:bg-[#3A0413]"
+              className="mt-4 bg-[#274E37] hover:bg-[#e65b2d]"
               onClick={() => window.history.back()}
             >
               Zurück
@@ -324,7 +582,7 @@ export default function TastingDetailPage() {
           </CardHeader>
           <CardContent>
             <Button 
-              className="mt-4 bg-[#4C0519] hover:bg-[#3A0413]"
+              className="mt-4 bg-[#274E37] hover:bg-[#e65b2d]"
               onClick={() => window.history.back()}
             >
               Zurück
@@ -336,18 +594,16 @@ export default function TastingDetailPage() {
   }
 
   const isHost = tasting.hostId === (user?.id || 1); // Temporär: Fallback für Entwicklung
+  console.log('[DEBUG TastingDetailPage] isHost:', isHost, 'status:', tasting.status, 'user:', user, 'tasting:', tasting);
 
   return (
-    <div className="container max-w-5xl mx-auto py-10 px-4">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold mb-2 flex items-center gap-2">
-            <Wine className="h-6 w-6 text-[#4C0519]" />
-            {tasting.name}
-          </h1>
-          <div className="flex gap-2 items-center">
-            <Badge variant={tasting.status === 'active' ? 'default' : tasting.status === 'completed' ? 'secondary' : 'outline'}>
-              {tasting.status === 'active' ? 'Aktiv' : tasting.status === 'completed' ? 'Abgeschlossen' : 'Entwurf'}
+          <h1 className="text-2xl font-bold">{tasting.name}</h1>
+          <div className="flex gap-2 mt-2">
+            <Badge variant={tasting.status === 'active' ? 'default' : tasting.status === 'started' ? 'secondary' : 'outline'}>
+              {tasting.status === 'active' ? 'Aktiv' : tasting.status === 'started' ? 'Gestartet' : 'Entwurf'}
             </Badge>
             <Badge variant={tasting.isPublic ? 'default' : 'outline'}>
               {tasting.isPublic ? 'Öffentlich' : 'Privat'}
@@ -355,56 +611,171 @@ export default function TastingDetailPage() {
           </div>
         </div>
 
-        {isHost && (
-          <div className="flex gap-2">
-            {tasting.status === 'draft' && (
-              <>
-                <Button 
-                  onClick={() => updateTastingStatus('active')}
-                  className="bg-green-600 hover:bg-green-700"
-                >
-                  Verkostung starten
-                </Button>
-                <Button 
-                  onClick={() => updateTastingStatus('saved')}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  Speichern
-                </Button>
-              </>
-            )}
-            {tasting.status === 'active' && (
-              <Button 
-                onClick={() => updateTastingStatus('completed')}
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                Verkostung abschließen
-              </Button>
-            )}
-            {tasting.status === 'completed' && (
-              <Button 
-                onClick={() => updateTastingStatus('active')}
-                variant="outline"
-              >
-                Wieder aktivieren
-              </Button>
-            )}
-          </div>
-        )}
+        <div className="flex gap-2">
+          {tasting.status === 'draft' && (
+            <Button onClick={() => updateTastingStatus('active')} disabled={isUpdatingStatus}>
+              Verkostung veröffentlichen
+            </Button>
+          )}
+          {tasting.status === 'active' && (
+            <Button onClick={() => updateTastingStatus('started')} disabled={isUpdatingStatus}>
+              Verkostung starten
+            </Button>
+          )}
+          {tasting.status === 'started' && (
+            <Button onClick={startNextFlight} disabled={isStartingFlight}>
+              Nächster Flight starten
+            </Button>
+          )}
+        </div>
       </div>
 
       <Tabs defaultValue="flights" className="w-full">
         <TabsList className="mb-6">
           <TabsTrigger value="flights">Flights</TabsTrigger>
-          <TabsTrigger value="participants">Teilnehmer</TabsTrigger>
+          <TabsTrigger value="participants">
+            Teilnehmer ({participants ? participants.filter(p => p.user?.id !== tasting?.hostId).length : 0})
+          </TabsTrigger>
           <TabsTrigger value="scoring">Punktesystem</TabsTrigger>
           {isHost && <TabsTrigger value="settings">Einstellungen</TabsTrigger>}
         </TabsList>
+        
+        <TabsContent value="participants" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Teilnehmer verwalten</CardTitle>
+              <CardDescription>
+                Hier sehen Sie alle Teilnehmer, die der Verkostung beigetreten sind.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {tasting && user?.id === tasting.hostId && (
+                <div className="mb-6">
+                  <h4 className="font-medium mb-2 flex items-center gap-2">
+                    <Users className="h-4 w-4" /> Einladungen
+                  </h4>
+                  <div className="flex gap-2 mb-3">
+                    <Input 
+                      placeholder="name@example.com" 
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const email = inviteEmail.trim().toLowerCase();
+                          if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                            addInviteMutation.mutate(email);
+                          } else {
+                            toast({ title: 'Ungültige E-Mail', variant: 'destructive' });
+                          }
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        const email = inviteEmail.trim().toLowerCase();
+                        if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                          addInviteMutation.mutate(email);
+                        } else {
+                          toast({ title: 'Ungültige E-Mail', variant: 'destructive' });
+                        }
+                      }}
+                      disabled={addInviteMutation.isPending}
+                    >
+                      Hinzufügen
+                    </Button>
+                  </div>
+                  {invites.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {invites.map((i) => (
+                        <span key={i.email} className="inline-flex items-center gap-2 bg-gray-100 text-gray-800 rounded-full px-3 py-1 text-sm">
+                          {i.email}
+                          <button
+                            type="button"
+                            className="text-gray-500 hover:text-gray-700"
+                            onClick={() => removeInviteMutation.mutate(i.email)}
+                            aria-label={`Entferne ${i.email}`}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">Noch keine Einladungen</p>
+                  )}
+                </div>
+              )}
+              {isParticipantsLoading ? (
+                <div className="flex justify-center p-6">
+                  <Loader2 className="h-6 w-6 animate-spin text-[#274E37]" />
+                </div>
+              ) : participants && participants.length > 0 ? (
+                <div className="space-y-3">
+                  {participants
+                    // Filtere den Veranstalter aus der Teilnehmerliste
+                    .filter(participant => participant.user?.id !== tasting.hostId)
+                    .map((participant) => (
+                      <div 
+                        key={participant.id} 
+                        className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors"
+                      >
+                        <div className="flex items-center space-x-3">
+                          <div className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center overflow-hidden">
+                            {participant.user?.profileImage ? (
+                              <img 
+                                src={participant.user.profileImage} 
+                                alt={participant.user.name || 'Profilbild'} 
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  // Fallback, falls das Bild nicht geladen werden kann
+                                  const target = e.target as HTMLImageElement;
+                                  target.style.display = 'none';
+                                  target.parentElement?.querySelector('svg')?.classList.remove('hidden');
+                                }}
+                              />
+                            ) : null}
+                            <UserIcon className={`h-5 w-5 text-gray-500 ${participant.user?.profileImage ? 'hidden' : ''}`} />
+                          </div>
+                          <div>
+                            <p className="font-medium">{participant.user?.name || 'Unbekannter Benutzer'}</p>
+                            <p className="text-sm text-gray-500">
+                              {participant.user?.company || 'Keine Firma angegeben'}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          {isHost && participant.user?.id !== user?.id && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-red-500 hover:bg-red-50 hover:text-red-600"
+                              onClick={() => handleRemoveParticipant(participant.userId)}
+                              title="Teilnehmer entfernen"
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  <UserIcon className="h-12 w-12 mx-auto mb-2 text-gray-300" />
+                  <p>Noch keine Teilnehmer beigetreten.</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="flights" className="space-y-6">
           {isFlightsLoading ? (
             <div className="flex justify-center p-10">
-              <Loader2 className="h-6 w-6 animate-spin text-[#4C0519]" />
+              <Loader2 className="h-6 w-6 animate-spin text-[#274E37]" />
             </div>
           ) : flights && flights.length > 0 ? (
             <div className="space-y-6">
@@ -418,7 +789,7 @@ export default function TastingDetailPage() {
                           {flight.completedAt ? 'Abgeschlossen' : flight.startedAt ? 'Im Gange' : 'Nicht gestartet'}
                         </Badge>
                       </div>
-                      <CardDescription className="flex justify-between items-center">
+                      <div className="text-sm text-muted-foreground flex justify-between items-center px-6 pt-1">
                         <span>{flight.wines?.length || 0} Weine</span>
                         {timeLeft !== null && timerFlightId === flight.id && (
                           <div className="flex items-center text-amber-600 font-medium">
@@ -428,14 +799,14 @@ export default function TastingDetailPage() {
                             </span>
                           </div>
                         )}
-                      </CardDescription>
+                      </div>
                     </CardHeader>
                     <CardContent className="pt-6">
                       {flight.wines && flight.wines.length > 0 ? (
                         <div className="grid gap-2">
                           {flight.wines.map((wine: any) => (
                             <div key={wine.id} className="flex items-center p-2 rounded bg-gray-50">
-                              <div className="h-8 w-8 flex items-center justify-center bg-[#4C0519] text-white rounded-full mr-3">
+                              <div className="h-8 w-8 flex items-center justify-center bg-[#274E37] text-white rounded-full mr-3">
                                 {wine.letterCode}
                               </div>
                               <div>
@@ -460,12 +831,11 @@ export default function TastingDetailPage() {
                           >
                             Wein hinzufügen
                           </Button>
-                          {!flight.startedAt && (
+                          {tasting.status === 'started' && !flight.startedAt && (
                             <Button
                               size="sm"
                               onClick={() => handleStartFlight(flight.id)}
-                              className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
-                              disabled={tasting.status !== 'active'}
+                              className="w-full bg-[#274E37] hover:bg-[#e65b2d]"
                             >
                               Flight starten
                             </Button>
@@ -495,35 +865,27 @@ export default function TastingDetailPage() {
                   </Card>
                 ))}
               </div>
-              
-              {/* Button zum Hinzufügen weiterer Flights */}
-              {isHost && tasting.status === 'draft' && (
-                <div className="flex justify-center">
-                  <Button 
-                    className="w-full md:w-auto bg-[#4C0519] hover:bg-[#3A0413]"
-                    onClick={() => setCreateFlightOpen(true)}
-                  >
-                    Weiteren Flight hinzufügen
-                  </Button>
-                </div>
-              )}
             </div>
           ) : (
-            <Card>
-              <CardContent className="pt-6">
-                <p className="text-center text-gray-500 my-8">
-                  Keine Flights für diese Verkostung.
-                </p>
-                {isHost && tasting.status === 'draft' && (
-                  <Button 
-                    className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
-                    onClick={() => setCreateFlightOpen(true)}
-                  >
-                    Neuen Flight erstellen
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
+            <div className="flex flex-col items-center justify-center p-10">
+              <p className="text-gray-500 italic mb-4">Keine Flights für diese Verkostung</p>
+            </div>
+          )}
+          {/* Dialog für Flight-Erstellung */}
+          <CreateFlightDialog
+            tastingId={tasting.id}
+            open={createFlightDialogOpen}
+            onOpenChange={setCreateFlightDialogOpen}
+          />
+          {isHost && (
+            <div className="flex justify-center mt-6">
+              <Button
+                className="bg-[#274E37] hover:bg-[#e65b2d]"
+                onClick={() => setCreateFlightDialogOpen(true)}
+              >
+                {flights && flights.length > 0 ? 'Weiteren Flight hinzufügen' : 'Flight erstellen'}
+              </Button>
+            </div>
           )}
         </TabsContent>
 
@@ -532,7 +894,7 @@ export default function TastingDetailPage() {
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle className="flex items-center">
-                  <Users className="h-5 w-5 mr-2 text-[#4C0519]" />
+                  <Users className="h-5 w-5 mr-2 text-[#274E37]" />
                   Teilnehmer
                 </CardTitle>
                 <CardDescription>
@@ -553,7 +915,7 @@ export default function TastingDetailPage() {
                 <div className="rounded-md border">
                   <div className="bg-gray-50 p-3 flex justify-between items-center font-medium text-sm">
                     <div className="flex items-center">
-                      <User className="h-4 w-4 mr-2 text-gray-500" />
+                      <UserIcon className="h-4 w-4 mr-2 text-gray-500" />
                       <span>Name</span>
                     </div>
                     <div className="flex items-center gap-4">
@@ -646,7 +1008,7 @@ export default function TastingDetailPage() {
                               key={value}
                               className={`w-10 h-10 rounded-full ${
                                 pointsConfiguration.producer === value 
-                                  ? 'bg-[#4C0519] text-white' 
+                                  ? 'bg-[#274E37] text-white' 
                                   : 'bg-gray-100 hover:bg-gray-200'
                               }`}
                               onClick={() => handlePointsChange('producer', value)}
@@ -665,7 +1027,7 @@ export default function TastingDetailPage() {
                               key={value}
                               className={`w-10 h-10 rounded-full ${
                                 pointsConfiguration.name === value 
-                                  ? 'bg-[#4C0519] text-white' 
+                                  ? 'bg-[#274E37] text-white' 
                                   : 'bg-gray-100 hover:bg-gray-200'
                               }`}
                               onClick={() => handlePointsChange('name', value)}
@@ -684,7 +1046,7 @@ export default function TastingDetailPage() {
                               key={value}
                               className={`w-10 h-10 rounded-full ${
                                 pointsConfiguration.vintage === value 
-                                  ? 'bg-[#4C0519] text-white' 
+                                  ? 'bg-[#274E37] text-white' 
                                   : 'bg-gray-100 hover:bg-gray-200'
                               }`}
                               onClick={() => handlePointsChange('vintage', value)}
@@ -703,7 +1065,7 @@ export default function TastingDetailPage() {
                               key={value}
                               className={`w-10 h-10 rounded-full ${
                                 pointsConfiguration.country === value 
-                                  ? 'bg-[#4C0519] text-white' 
+                                  ? 'bg-[#274E37] text-white' 
                                   : 'bg-gray-100 hover:bg-gray-200'
                               }`}
                               onClick={() => handlePointsChange('country', value)}
@@ -722,7 +1084,7 @@ export default function TastingDetailPage() {
                               key={value}
                               className={`w-10 h-10 rounded-full ${
                                 pointsConfiguration.region === value 
-                                  ? 'bg-[#4C0519] text-white' 
+                                  ? 'bg-[#274E37] text-white' 
                                   : 'bg-gray-100 hover:bg-gray-200'
                               }`}
                               onClick={() => handlePointsChange('region', value)}
@@ -741,7 +1103,7 @@ export default function TastingDetailPage() {
                               key={value}
                               className={`w-10 h-10 rounded-full ${
                                 pointsConfiguration.varietals === value 
-                                  ? 'bg-[#4C0519] text-white' 
+                                  ? 'bg-[#274E37] text-white' 
                                   : 'bg-gray-100 hover:bg-gray-200'
                               }`}
                               onClick={() => handleVarietalsChange(value)}
@@ -758,7 +1120,7 @@ export default function TastingDetailPage() {
                           <button
                             className={`px-4 py-2 rounded text-sm ${
                               pointsConfiguration.varietalsMode === 'per' 
-                                ? 'bg-[#4C0519] text-white' 
+                                ? 'bg-[#274E37] text-white' 
                                 : 'bg-gray-100 hover:bg-gray-200'
                             }`}
                             onClick={() => handleVarietalsModeChange('per')}
@@ -768,7 +1130,7 @@ export default function TastingDetailPage() {
                           <button
                             className={`px-4 py-2 rounded text-sm ${
                               pointsConfiguration.varietalsMode === 'all' 
-                                ? 'bg-[#4C0519] text-white' 
+                                ? 'bg-[#274E37] text-white' 
                                 : 'bg-gray-100 hover:bg-gray-200'
                             }`}
                             onClick={() => handleVarietalsModeChange('all')}
@@ -828,7 +1190,7 @@ export default function TastingDetailPage() {
                             onClick={() => handleLeaderboardVisibilityChange(0)}
                             className={`text-xs px-2 py-1 rounded ${
                               leaderboardVisibility === 0
-                                ? "bg-[#4C0519] text-white"
+                                ? "bg-[#274E37] text-white"
                                 : "bg-gray-100 hover:bg-gray-200"
                             }`}
                           >
@@ -841,7 +1203,7 @@ export default function TastingDetailPage() {
                           max="10" 
                           value={leaderboardVisibility}
                           onChange={(e) => handleLeaderboardVisibilityChange(parseInt(e.target.value))}
-                          className="w-full accent-[#4C0519]"
+                          className="w-full accent-[#274E37]"
                         />
                         <div className="flex justify-between text-xs text-gray-500">
                           <span>Alle</span>
@@ -869,7 +1231,7 @@ export default function TastingDetailPage() {
                                     <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center border border-white ${
                                       index === 0 ? 'bg-yellow-500' : 
                                       index === 1 ? 'bg-gray-400' : 
-                                      index === 2 ? 'bg-amber-700' : 'bg-[#4C0519]'
+                                      index === 2 ? 'bg-amber-700' : 'bg-[#274E37]'
                                     } text-white text-[10px] font-bold`}>
                                       {index + 1}
                                     </div>
@@ -895,7 +1257,7 @@ export default function TastingDetailPage() {
                                     <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center border border-white ${
                                       index === 0 ? 'bg-yellow-500' : 
                                       index === 1 ? 'bg-gray-400' : 
-                                      index === 2 ? 'bg-amber-700' : 'bg-[#4C0519]'
+                                      index === 2 ? 'bg-amber-700' : 'bg-[#274E37]'
                                     } text-white text-[10px] font-bold`}>
                                       {index + 1}
                                     </div>
@@ -924,18 +1286,14 @@ export default function TastingDetailPage() {
       </Tabs>
       
       {/* Dialoge */}
-      <CreateFlightDialog 
-        tastingId={tastingId}
-        open={createFlightOpen}
-        onOpenChange={setCreateFlightOpen}
-      />
-      
       {selectedFlightId && (
         <>
           <AddWineDialog 
             flightId={selectedFlightId}
             open={addWineDialogOpen}
             onOpenChange={setAddWineDialogOpen}
+            onWineAdded={handleWineAdded}
+            refetchFlights={refetchFlights}
           />
           
           <SetTimerDialog

@@ -6,12 +6,18 @@ import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { storage } from "./storage";
 import { User as SelectUser } from "@shared/schema";
+import { users } from "@shared/schema";
+import { eq } from "drizzle-orm";
+import { db } from "./db";
 
 // Erweitere die Session-Schnittstelle um benutzerdefinierte Eigenschaften
 declare module 'express-session' {
   interface SessionData {
     userId?: number;
     authenticated?: boolean;
+    passport?: {
+      user?: number; // User ID
+    };
   }
 }
 
@@ -36,28 +42,62 @@ async function comparePasswords(supplied: string, stored: string) {
   return timingSafeEqual(hashedBuf, suppliedBuf);
 }
 
+// Simple type declarations for Passport
+declare global {
+  namespace Express {
+    interface User {
+      id: number;
+      email: string;
+      name: string;
+      company: string;
+    }
+
+    interface Request {
+      user?: User;
+      login(user: any, callback: (err: any) => void): void;
+      login(user: any): Promise<void>;
+      logout(callback: (err: any) => void): void;
+      logout(): void;
+      isAuthenticated(): boolean;
+      isUnauthenticated(): boolean;
+    }
+  }
+}
+
 export function setupAuth(app: Express) {
-  // WICHTIG: Sehr einfache, direkte Session-Konfiguration für Entwicklung
+  // Configure session with PostgreSQL Store
   const sessionSettings: session.SessionOptions = {
-    secret: process.env.SESSION_SECRET || "blindsip-secret-key-dev-only",
-    resave: true,
-    saveUninitialized: true,
+    secret: process.env.SESSION_SECRET || "dev-secret-key",
+    resave: false,
+    saveUninitialized: false,
+    store: storage.sessionStore,
     cookie: {
-      maxAge: 1000 * 60 * 60 * 24 * 14, // 14 Tage
+      maxAge: 1000 * 60 * 60 * 24 * 14, // 14 days
       httpOnly: true,
-      secure: false,
-      path: '/',
-      // Wir verwenden 'none' statt 'lax' für Entwicklung
-      sameSite: 'none'
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      path: '/'
     }
   };
-  
-  console.log("Session secret is set:", !!process.env.SESSION_SECRET, "Store is set:", !!storage.sessionStore);
 
+  console.log("Session configuration initialized");
+
+  // Trust first proxy (if behind a proxy like nginx)
   app.set("trust proxy", 1);
+  
+  // Session Middleware
   app.use(session(sessionSettings));
+  
+  // Initialize Passport
   app.use(passport.initialize());
   app.use(passport.session());
+
+  // Simple debug middleware
+  app.use((req, res, next) => {
+    console.log('Session ID:', req.sessionID);
+    console.log('User authenticated:', req.isAuthenticated?.());
+    next();
+  });
 
   passport.use(
     new LocalStrategy(
@@ -66,8 +106,14 @@ export function setupAuth(app: Express) {
         passwordField: 'password'
       },
       async (email, password, done) => {
+        console.log('=== DATENBANK-CONNECTION DEBUG ===');
+        console.log('DB-URL:', process.env.DATABASE_URL);
+        console.log('Storage Instance:', storage.constructor.name);
+        console.log('Session Store:', storage.sessionStore?.constructor?.name);
+        
         try {
-          const user = await storage.getUserByEmail(email);
+          const user = await storage.getUserByEmail(email.toLowerCase());
+          console.log('User lookup result:', user);
           if (!user || !(await comparePasswords(password, user.password))) {
             return done(null, false, { message: "Falsche E-Mail oder Passwort" });
           }
@@ -79,7 +125,10 @@ export function setupAuth(app: Express) {
     )
   );
 
-  passport.serializeUser((user, done) => {
+  passport.serializeUser((user: SelectUser, done) => {
+    console.log('=== SESSION SERIALIZATION ===');
+    console.log('Serializing user:', user.id);
+    console.log('Session store:', storage.sessionStore?.constructor?.name);
     done(null, user.id);
   });
 
@@ -135,6 +184,7 @@ export function setupAuth(app: Express) {
         });
       });
     } catch (error) {
+      console.error('Fehler bei der Registrierung:', error);
       next(error);
     }
   });
@@ -231,5 +281,47 @@ export function setupAuth(app: Express) {
     
     // Wenn keine Authentifizierung vorliegt, 401 zurückgeben
     return res.status(401).json({ message: "Nicht authentifiziert" });
+  });
+
+  // Update current user's profile (name, company, profileImage)
+  app.patch('/api/user', async (req, res, next) => {
+    try {
+      const userId = req.user?.id || req.session.userId;
+      if (!userId) return res.status(401).json({ message: 'Nicht authentifiziert' });
+
+      const { name, company, profileImage } = req.body || {};
+      const update: any = {};
+      if (typeof name === 'string') update.name = name;
+      if (typeof company === 'string') update.company = company;
+      if (typeof profileImage === 'string') update.profileImage = profileImage;
+
+      const updated = await db.update(users).set(update).where(eq(users.id, userId)).returning();
+      const u = updated?.[0];
+      if (!u) return res.status(404).json({ message: 'User nicht gefunden' });
+      const { password, ...withoutPw } = u as any;
+      return res.json(withoutPw);
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Change password: needs currentPassword + newPassword
+  app.post('/api/user/password', async (req, res, next) => {
+    try {
+      const userId = req.user?.id || req.session.userId;
+      if (!userId) return res.status(401).json({ message: 'Nicht authentifiziert' });
+      const { currentPassword, newPassword } = req.body || {};
+      if (!currentPassword || !newPassword) return res.status(400).json({ message: 'Ungültige Eingaben' });
+      const u = await storage.getUser(userId);
+      if (!u) return res.status(404).json({ message: 'User nicht gefunden' });
+      const ok = await comparePasswords(currentPassword, (u as any).password);
+      if (!ok) return res.status(400).json({ message: 'Aktuelles Passwort ist falsch' });
+      const hashed = await hashPassword(newPassword);
+      const updated = await db.update(users).set({ password: hashed }).where(eq(users.id, userId)).returning();
+      if (!updated?.[0]) return res.status(500).json({ message: 'Passwort konnte nicht aktualisiert werden' });
+      return res.sendStatus(200);
+    } catch (e) {
+      next(e);
+    }
   });
 }

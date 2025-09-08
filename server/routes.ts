@@ -1,58 +1,102 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
+import { WebSocketServer } from 'ws';
 import { storage } from "./storage";
 import { setupAuth } from "./auth";
+
+// Map zum Speichern der aktiven WebSocket-Verbindungen pro Tasting
+const joinRooms = new Map<number, Set<WebSocket>>();
+import { flights, users } from "@shared/schema";
+import { db } from "./db";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import axios from "axios";
 import { VinaturelAPI } from "./vinaturel-api";
-import { eq } from "drizzle-orm";
-import { db } from "./db";
+import { VinaturelService } from "./services/vinaturel.service";
 import {
   insertTastingSchema,
   insertScoringRuleSchema,
   insertFlightSchema,
   insertWineSchema,
   insertGuessSchema,
-  insertParticipantSchema,
-  flights
+  insertParticipantSchema
 } from "@shared/schema";
+import { Pool } from 'pg';
 
 // Helper function to ensure user is authenticated
-function ensureAuthenticated(req: Request, res: Response, next: Function) {
-  console.log("Checking authentication for:", req.path, "Session ID:", req.sessionID);
+async function ensureAuthenticated(req: Request, res: Response, next: Function) {
+  console.log("=== AUTHENTICATION CHECK ===");
+  console.log("Path:", req.path);
+  console.log("Session ID:", req.sessionID);
+  console.log("Session data:", req.session);
+  console.log("User:", req.user);
   
-  // Prüfe zuerst die Standard-Passport-Authentifizierung
-  if (req.isAuthenticated()) {
-    console.log("User is authenticated via passport, user ID:", (req.user as any)?.id);
+  // Check if user is authenticated via Passport
+  if (req.isAuthenticated() && req.user) {
+    console.log("User is authenticated via Passport, user ID:", req.user.id);
+    // Ensure session has the user ID
+    if (!req.session) {
+      req.session = {} as any;
+    }
+    req.session.userId = req.user.id;
     return next();
   }
   
-  // Alternativ prüfen wir auch die Session-Variable, die wir gesetzt haben
-  if (req.session && req.session.userId) {
-    console.log("User is authenticated via session variable, user ID:", req.session.userId);
-    // Hier könnten wir auch den Benutzer aus der DB laden und req.user setzen
-    return next();
+  // Check session userId
+  if (req.session?.userId) {
+    console.log("User is authenticated via session, user ID:", req.session.userId);
+    try {
+      const user = await storage.getUser(req.session.userId);
+      if (user) {
+        req.user = user;
+        return next();
+      }
+    } catch (error) {
+      console.error("Error loading user from session:", error);
+    }
   }
   
-  // TEMPORÄRE LÖSUNG FÜR ENTWICKLUNG - NICHT FÜR PRODUKTION
-  // In der Entwicklung erlauben wir alle Anfragen für API-Endpunkte
+  // In development mode, allow access with debug info
   if (process.env.NODE_ENV === 'development') {
-    console.log("DEV MODE: Allowing access without authentication");
+    console.warn("DEV MODE: Allowing access without authentication");
+    console.log("Auth check debug:", { 
+      sessionID: req.sessionID,
+      session: req.session,
+      cookies: req.headers.cookie,
+      headers: req.headers
+    });
+    
+    // For development, create a test user if none exists
+    if (!req.user) {
+      try {
+        const testUser = await storage.getUserByEmail('test@example.com') || 
+          await storage.createUser({
+            email: 'test@example.com',
+            name: 'Test User',
+            company: 'Test Company',
+            password: 'password123',
+            profileImage: ''
+          });
+        req.user = testUser;
+        req.session.userId = testUser.id;
+        console.log("Using test user:", testUser);
+      } catch (error) {
+        console.error("Error creating test user:", error);
+      }
+    }
+    
     return next();
   }
   
-  console.log("Auth check failed: User is not authenticated", { 
-    sessionID: req.sessionID,
-    userInSession: !!req.session.userId,
-    hasUser: !!req.user,
-    isAuthenticated: req.isAuthenticated(),
-    cookies: req.headers.cookie
+  console.error("Authentication failed: No valid session found");
+  return res.status(401).json({ 
+    error: "Kein User eingeloggt"
   });
-  
-  res.status(401).json({ message: "Unauthorized - Sie müssen angemeldet sein" });
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // In-memory WebSocket rooms for join page
+  const joinRooms = new Map<number, Set<any>>();
   // Setup authentication routes
   setupAuth(app);
 
@@ -65,16 +109,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         password: process.env.VINATUREL_PASSWORD || '',
         apiKey: process.env.VINATUREL_API_KEY || ''
       };
-      
+
       console.log('Vinaturel API credentials used:', {
         username: credentials.username ? credentials.username : 'not set',
         password: credentials.password ? 'is set' : 'not set',
         apiKey: credentials.apiKey ? `${credentials.apiKey.substring(0, 5)}...` : 'not set',
       });
-      
+
       // Überprüfe, ob die erforderlichen Anmeldeinformationen vorhanden sind
       if (!credentials.username || !credentials.password || !credentials.apiKey) {
-        return res.status(500).json({ 
+        return res.status(500).json({
           error: 'Vinaturel API credentials not set',
           missingCredentials: {
             username: !credentials.username,
@@ -83,10 +127,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         });
       }
-      
+
       const limit = parseInt(req.query.limit as string) || 20;
       const page = parseInt(req.query.page as string) || 1;
-      
+
       const wines = await VinaturelAPI.fetchWines(credentials, undefined, limit, page);
       res.json(wines);
     } catch (error) {
@@ -95,98 +139,255 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get user's tastings (both hosted and participating)
-  app.get("/api/tastings", ensureAuthenticated, async (req, res) => {
+  // Import wines from Vinaturel API to our database
+  app.post("/api/vinaturel/import", ensureAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.id;
-      const hostedTastings = await storage.getHostedTastings(userId);
-      const availableTastings = await storage.getUserTastings(userId);
-      
-      // Get participating tastings (where the user is a participant)
-      const participatingTastings: typeof availableTastings = [];
-      for (const tasting of availableTastings) {
-        const participant = await storage.getParticipant(tasting.id, userId);
-        if (participant) {
-          participatingTastings.push(tasting);
-        }
+      const result = await VinaturelService.importWines();
+      res.json({ success: true, message: `Successfully imported ${result.count} wines` });
+    } catch (error) {
+      console.error('Error in /api/vinaturel/import:', error);
+      res.status(500).json({ success: false, message: 'Failed to import wines' });
+    }
+  });
+
+  // Search wines in our database
+  app.get("/api/vinaturel/search", ensureAuthenticated, async (req, res) => {
+    try {
+      console.log('[/api/vinaturel/search] Received search request:', req.query);
+      const { q } = req.query;
+      if (!q || typeof q !== 'string') {
+        console.error('[/api/vinaturel/search] Invalid query parameter:', q);
+        return res.status(400).json({ success: false, message: 'Query parameter q is required' });
+      }
+
+      console.log('[/api/vinaturel/search] Searching for:', q);
+      const wines = await VinaturelService.searchWines(q);
+      console.log('[/api/vinaturel/search] Found wines:', wines.data.length);
+      res.json({ success: true, data: wines });
+    } catch (error) {
+      console.error('[/api/vinaturel/search] Error:', error);
+      if (error instanceof Error) {
+        console.error('[/api/vinaturel/search] Error details:', {
+          message: error.message,
+          stack: error.stack
+        });
+      }
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to search wines',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
+  console.log('Registering /api/wines/search route'); // Debug
+  app.get('/api/wines/search', async (req, res) => {
+    console.log('Handling search via DB', { query: req.query.q }); // Debug
+    // ... bestehender Code
+  });
+
+  app.get('/api/wines/search', async (req, res) => {
+    try {
+      const { q } = req.query;
+      if (!q || typeof q !== 'string') {
+        return res.status(400).json({ error: 'Suchparameter fehlt' });
       }
       
-      res.json({
-        hosted: hostedTastings,
-        participating: participatingTastings,
-        available: availableTastings.filter(t => 
-          !hostedTastings.some(h => h.id === t.id) && 
-          !participatingTastings.some(p => p.id === t.id)
-        )
-      });
+      const results = await storage.searchWines(q);
+      res.json(results);
+      
     } catch (error) {
-      res.status(500).json({ error: (error as Error).message });
+      console.error('Search error:', error);
+      res.status(500).json({ error: 'Suche fehlgeschlagen' });
+    }
+  });
+
+  // Get user's tastings (hosted, participating, invited, available)
+  app.get("/api/tastings", ensureAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.id || req.session?.userId;
+      if (!userId) return res.status(401).json({ error: "Nicht autorisiert" });
+
+      const userEmail = req.user?.email;
+      const result = await storage.getUserTastings(userId, userEmail || "");
+
+      // Post-process: ensure hostName/hostCompany present
+      const hydrateHost = async (arr: any[]) => {
+        const out: any[] = [];
+        for (const t of arr || []) {
+          if (!t.hostName || String(t.hostName).trim().length === 0) {
+            try {
+              const u = await storage.getUser(t.hostId);
+              if (u) {
+                t.hostName = (u.name || '').trim();
+                t.hostCompany = u.company || null;
+              }
+            } catch {}
+          }
+          out.push(t);
+        }
+        return out;
+      };
+
+      const hosted = await hydrateHost(result.hosted);
+      const participating = await hydrateHost(result.participating);
+      const available = await hydrateHost(result.available);
+      const invited = await hydrateHost(result.invited);
+
+      return res.json({ hosted, participating, available, invited, isAuthenticated: true });
+    } catch (error) {
+      console.error("Fehler in /api/tastings:", error);
+      return res.status(500).json({ 
+        error: "Ein Fehler ist aufgetreten",
+        details: error instanceof Error ? error.message : "Unknown error" 
+      });
     }
   });
 
   // Create a new tasting
   app.post("/api/tastings", ensureAuthenticated, async (req, res) => {
+    console.log('Session User:', req.user?.id);
+    console.log('Session ID:', req.sessionID);
+    console.log('Session Store:', storage.sessionStore);
     try {
-      // In der Entwicklung können wir die hostId direkt vom Client akzeptieren
-      // oder einen Default-Wert von 1 verwenden, wenn kein Benutzer authentifiziert ist
-      let userId: number;
-      
+      // HostId IMMER aus der Session/User ermitteln, NIE vom Client übernehmen!
+      let userId: number | undefined = undefined;
       if (req.user && req.user.id) {
         userId = req.user.id;
-        console.log("Verwende authentifizierten Benutzer:", userId);
-      } else if (req.body.hostId) {
-        userId = req.body.hostId;
-        console.log("Verwende Client-Benutzer-ID:", userId);
-      } else {
-        // Default auf ID 1 für Entwicklung
-        userId = 1;
-        console.log("Verwende Default-Benutzer-ID:", userId);
+      } else if (req.session && req.session.userId) {
+        userId = req.session.userId;
       }
-      
+      if (!userId) {
+        return res.status(401).json({ error: "Kein User eingeloggt" });
+      }
+      console.log("Verk. wird erstellt von User:", userId);
       // Validate tasting data
-      const tastingData = insertTastingSchema.parse({
+      const parsed = insertTastingSchema.parse({
         ...req.body,
-        hostId: userId
+        hostId: userId,
+        isPublic: req.body.isPublic !== undefined ? Boolean(req.body.isPublic) : false
       });
-      
-      const tasting = await storage.createTasting(tastingData);
-      
+
+      const createPayload: {
+        name: string;
+        hostId: number;
+        isPublic: boolean;
+        password?: string;
+        invitedEmails?: string[];
+      } = {
+        name: parsed.name,
+        hostId: userId,
+        isPublic: Boolean(parsed.isPublic),
+        password: parsed.password ?? undefined,
+        invitedEmails: (parsed as any).invitedEmails ?? undefined,
+      };
+
+      const tasting = await storage.createTasting(createPayload);
       // If it's private, add invitees
       if (!tasting.isPublic && req.body.invitees) {
         const invitees: string[] = req.body.invitees;
         for (const email of invitees) {
           await storage.addTastingInvitee({ 
-            tastingId: tasting.id, 
-            email 
+            email,
+            tastingId: tasting.id,
+            role: 'guest'
           });
         }
       }
-      
       res.status(201).json(tasting);
     } catch (error) {
-      if (error instanceof z.ZodError) {
-        res.status(400).json({ error: error.errors });
-      } else {
-        res.status(500).json({ error: (error as Error).message });
-      }
+      res.status(400).json({ error: (error as Error).message });
     }
   });
+
+  // Development helper: list tasting invites
+  if (process.env.NODE_ENV === 'development') {
+    app.get('/api/debug/invites', async (_req, res) => {
+      try {
+        const rows = await storage.getTastingInvitees(0).catch(() => [] as any);
+        // get all invites if tastingId=0 shortcut unsupported
+        // Fallback direct query when method expects id
+        if (Array.isArray(rows) && rows.length > 0) {
+          return res.json(rows);
+        }
+        // Try reading raw table via db if available
+        try {
+          const { tastingInvites } = await import('../db/schema');
+          const { db } = await import('./db');
+          const all = await db.select().from(tastingInvites);
+          return res.json(all);
+        } catch (e) {
+          return res.json({ error: 'Unable to fetch invites', details: String(e) });
+        }
+      } catch (e) {
+        return res.status(500).json({ error: String(e) });
+      }
+    });
+  }
 
   // Get a specific tasting
   app.get("/api/tastings/:id", async (req, res) => {
     try {
       const tastingId = parseInt(req.params.id);
       const tasting = await storage.getTasting(tastingId);
-      
       if (!tasting) {
         return res.status(404).json({ error: "Tasting not found" });
       }
-      
-      // ENTWICKLUNGSMODUS: Erlauben Sie immer den Zugriff
-      // This is for development only
-      return res.json(tasting);
+      // Ensure status is always set
+      if (!tasting.status) {
+        tasting.status = 'draft';
+      }
+      res.json(tasting);
     } catch (error) {
       res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
+  // List invites for a tasting (debug/host use)
+  app.get("/api/tastings/:id/invites", async (req, res) => {
+    try {
+      const tastingId = parseInt(req.params.id);
+      const invites = await storage.getTastingInvitees(tastingId);
+      return res.json(invites);
+    } catch (error) {
+      return res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
+  // Add an invite (host only)
+  app.post("/api/tastings/:id/invites", ensureAuthenticated, async (req, res) => {
+    try {
+      const tastingId = parseInt(req.params.id);
+      const email = (req.body?.email || '').toString().trim().toLowerCase();
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ error: 'Ungültige E-Mail' });
+      }
+      const tasting = await storage.getTasting(tastingId);
+      if (!tasting) return res.status(404).json({ error: 'Tasting not found' });
+      if (req.user && tasting.hostId !== req.user.id) {
+        return res.status(403).json({ error: 'Nur der Host darf Einladungen verwalten' });
+      }
+      const invite = await storage.addTastingInvitee({ tastingId, email, role: 'guest' });
+      return res.status(201).json(invite);
+    } catch (error) {
+      return res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
+  // Remove an invite (host only)
+  app.delete("/api/tastings/:id/invites/:email", ensureAuthenticated, async (req, res) => {
+    try {
+      const tastingId = parseInt(req.params.id);
+      const email = decodeURIComponent(req.params.email).toLowerCase();
+      const tasting = await storage.getTasting(tastingId);
+      if (!tasting) return res.status(404).json({ error: 'Tasting not found' });
+      if (req.user && tasting.hostId !== req.user.id) {
+        return res.status(403).json({ error: 'Nur der Host darf Einladungen verwalten' });
+      }
+      const ok = await storage.removeTastingInvitee(tastingId, email);
+      return res.status(ok ? 200 : 404).json({ ok });
+    } catch (error) {
+      return res.status(500).json({ error: (error as Error).message });
     }
   });
 
@@ -196,7 +397,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tastingId = parseInt(req.params.id);
       const { status } = req.body;
       
-      if (!status || !["draft", "saved", "active", "completed"].includes(status)) {
+      if (!status || !["draft", "active", "started"].includes(status)) {
         return res.status(400).json({ error: "Invalid status" });
       }
       
@@ -211,49 +412,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only the host can update the tasting status" });
       }
       
-      // Wenn wir auf "active" setzen, prüfen wir, ob mindestens ein Flight mit Weinen vorhanden ist
+      // When setting to active, check if at least one flight with wines exists
       if (status === "active") {
         const flights = await storage.getFlightsByTasting(tastingId);
         
         if (!flights || flights.length === 0) {
-          return res.status(400).json({ error: "Tasting requires at least one flight to be activated" });
-        }
-        
-        // Prüfen, ob die Weine in den Flights vorhanden sind
-        let hasWines = false;
-        for (const flight of flights) {
-          const wines = await storage.getWinesByFlight(flight.id);
-          if (wines && wines.length > 0) {
-            hasWines = true;
-            break;
-          }
-        }
-        
-        if (!hasWines) {
-          return res.status(400).json({ error: "Tasting requires at least one wine in a flight to be activated" });
-        }
-        
-        // Scoring Rules prüfen
-        const scoringRules = await storage.getScoringRule(tastingId);
-        if (!scoringRules) {
-          // Erstelle Standard-Scoring-Regeln, wenn keine vorhanden sind
-          await storage.createScoringRule({
-            tastingId,
-            country: 1,
-            region: 1,
-            producer: 2,
-            wineName: 2,
-            vintage: 1,
-            varietals: 1,
-            anyVarietalPoint: true
-          });
+          return res.status(400).json({ error: "Cannot activate tasting without flights" });
         }
       }
       
-      const updatedTasting = await storage.updateTastingStatus(tastingId, status);
+      const updatedTasting = await storage.updateTasting(tastingId, { status });
+
+      // Broadcast status change to waiting room
+      if (joinRooms.has(tastingId)) {
+        const payload = JSON.stringify({
+          type: 'tasting_status',
+          status,
+          tastingId,
+          timestamp: new Date().toISOString(),
+        });
+        for (const client of joinRooms.get(tastingId) || []) {
+          if (client.readyState === 1) {
+            try { client.send(payload); } catch {}
+          }
+        }
+      }
+
       res.json(updatedTasting);
     } catch (error) {
-      console.error("Error updating tasting status:", error);
       res.status(500).json({ error: (error as Error).message });
     }
   });
@@ -318,62 +504,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create a flight for a tasting
-  app.post("/api/tastings/:id/flights", async (req, res) => {
+  app.post("/api/tastings/:tastingId/flights", ensureAuthenticated, async (req, res) => {
+    console.log('Request body:', req.body);
+    const tastingId = parseInt(req.params.tastingId);
+    console.log('Creating flight for tasting:', tastingId);
     try {
-      const tastingId = parseInt(req.params.id);
-      
-      const tasting = await storage.getTasting(tastingId);
-      if (!tasting) {
-        return res.status(404).json({ error: "Tasting not found" });
-      }
-      
-      // Im Entwicklungsmodus Zugriff erlauben
-      // This is for development only
-      
-      // Get existing flights to determine next order index and flight number
       const existingFlights = await storage.getFlightsByTasting(tastingId);
-      const orderIndex = existingFlights.length;
-      const flightNumber = orderIndex + 1;
-      
-      // Automatisch Namen und Standardwerte generieren 
-      const flightData = insertFlightSchema.parse({
+      const flightData = {
         tastingId,
-        orderIndex,
-        name: `Flight ${flightNumber}`,
-        timeLimit: 1800 // 30 minutes default
-      });
-      
+        name: `Flight ${existingFlights.length + 1}`,
+        orderIndex: existingFlights.length,
+        timeLimit: 1800
+      };
+      console.log('Flight data to create:', flightData);
       const flight = await storage.createFlight(flightData);
       res.status(201).json(flight);
     } catch (error) {
-      if (error instanceof z.ZodError) {
-        res.status(400).json({ error: error.errors });
-      } else {
-        res.status(500).json({ error: (error as Error).message });
-      }
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      console.error('Flight creation error:', errorMessage);
+      res.status(500).json({ error: errorMessage });
     }
   });
 
   // Get flights for a tasting
-  app.get("/api/tastings/:id/flights", async (req, res) => {
+  app.get("/api/tastings/:tastingId/flights", ensureAuthenticated, async (req, res) => {
+    const tastingId = parseInt(req.params.tastingId);
+    console.log('Fetching flights for tasting:', tastingId);
     try {
-      const tastingId = parseInt(req.params.id);
-      
-      const tasting = await storage.getTasting(tastingId);
-      if (!tasting) {
-        return res.status(404).json({ error: "Tasting not found" });
-      }
-      
       const flights = await storage.getFlightsByTasting(tastingId);
-      
-      // For each flight, get the wines
+
+      // For each flight, fetch its wines and attach as .wines
       const flightsWithWines = await Promise.all(
         flights.map(async (flight) => {
           const wines = await storage.getWinesByFlight(flight.id);
           return { ...flight, wines };
         })
       );
-      
+
+      console.log('Flights result:', flightsWithWines);
       res.json(flightsWithWines);
     } catch (error) {
       res.status(500).json({ error: (error as Error).message });
@@ -408,6 +576,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Update flight start time
       const updatedFlight = await storage.updateFlightTimes(flightId, new Date(), undefined);
+
+      // Broadcast flight started to waiting/join clients
+      if (joinRooms.has(tasting.id)) {
+        // Include minimal wine info
+        const wines = await storage.getWinesByFlight(flightId);
+        const payload = JSON.stringify({
+          type: 'flight_started',
+          tastingId: tasting.id,
+          flightId: flightId,
+          wines: wines?.map(w => ({ id: w.id, letterCode: w.letterCode })) || [],
+          timestamp: new Date().toISOString(),
+        });
+        for (const client of joinRooms.get(tasting.id) || []) {
+          if (client.readyState === 1) {
+            try { client.send(payload); } catch {}
+          }
+        }
+      }
+
       res.json(updatedFlight);
     } catch (error) {
       res.status(500).json({ error: (error as Error).message });
@@ -447,38 +634,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Get the tasting
       const tasting = await storage.getTasting(flight.tastingId);
-      if (!tasting) {
-        return res.status(404).json({ error: "Tasting not found" });
+
+      const timeLimit = (minutes * 60) || 0; // seconds
+
+      // Broadcast timer started to clients
+      if (joinRooms.has(tasting.id)) {
+        const payload = JSON.stringify({
+          type: 'timer_started',
+          tastingId: tasting.id,
+          flightId: flightId,
+          timeLimit,
+          startedAt: new Date().toISOString(),
+        });
+        for (const client of joinRooms.get(tasting.id) || []) {
+          if (client.readyState === 1) {
+            try { client.send(payload); } catch {}
+          }
+        }
       }
-      
-      // Update flight time limit (convert minutes to seconds)
-      const timeLimit = minutes * 60;
-      const updatedFlight = await db.update(flights)
-        .set({ timeLimit })
-        .where(eq(flights.id, flightId))
-        .returning();
-      
-      res.json(updatedFlight[0]);
-      
-      // Starte einen Timer, der den Flight nach Ablauf automatisch abschließt
+
+      // Set timer to automatically complete the flight
       setTimeout(async () => {
         try {
           // Prüfe, ob der Flight noch aktiv ist
-          const currentFlight = await db.select().from(flights).where(eq(flights.id, flightId)).limit(1);
+          const flightResult = await db.execute(
+            sql`SELECT id, started_at as "startedAt", completed_at as "completedAt" FROM flights WHERE id = ${flightId} LIMIT 1`
+          );
           
-          if (currentFlight.length > 0 && currentFlight[0].startedAt && !currentFlight[0].completedAt) {
+          const currentFlight = flightResult.rows[0] as { id: number; startedAt: Date | null; completedAt: Date | null } | undefined;
+          
+          if (currentFlight && currentFlight.startedAt && !currentFlight.completedAt) {
             // Flight ist noch aktiv, also beenden
             console.log(`Timer abgelaufen für Flight ${flightId}, beende automatisch`);
-            await storage.updateFlightTimes(flightId, currentFlight[0].startedAt, new Date());
+            await storage.updateFlightTimes(flightId, currentFlight.startedAt, new Date());
           }
-        } catch (error) {
-          console.error('Fehler beim automatischen Beenden des Flights:', error);
+        } catch (error: unknown) {
+          if (error instanceof Error) {
+            console.error('Fehler beim automatischen Beenden des Flights:', error.message);
+          } else {
+            console.error('Unbekannter Fehler beim automatischen Beenden des Flights');
+          }
         }
       }, timeLimit * 1000);
       
     } catch (error) {
-      console.error('Error setting flight timer:', error);
-      res.status(500).json({ error: (error as Error).message });
+      const errorMsg = error instanceof Error ? error.message : 'Unbekannter Fehler';
+      console.error('Fehler beim Setzen des Flight-Timers:', errorMsg);
+      res.status(500).json({ error: 'Interner Serverfehler beim Setzen des Timers' });
     }
   });
 
@@ -487,13 +689,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const flightId = parseInt(req.params.id);
       
-      // Get the flight
-      const flights = Array.from(await storage.getAllTastings())
-        .flatMap(async (tasting) => {
-          return await storage.getFlightsByTasting(tasting.id);
-        });
-      
-      const flight = (await Promise.all(flights)).flat().find(f => f.id === flightId);
+      // Get the flight directly from the database
+      const flightsResult = await db.select()
+        .from(flights)
+        .where(eq(flights.id, flightId))
+        .limit(1);
+      const flight = flightsResult[0];
       
       if (!flight) {
         return res.status(404).json({ error: "Flight not found" });
@@ -678,13 +879,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Create participant
-      const participant = await storage.createParticipant({
-        tastingId,
-        userId
-      });
+      // Check if user is already a participant
+      const existingParticipant = await storage.getParticipant(tastingId, userId);
       
-      res.status(201).json(participant);
+      if (!existingParticipant) {
+        // Get user to get the name
+        const user = await storage.getUser(userId);
+        if (!user) {
+          return res.status(404).json({ error: "User not found" });
+        }
+        
+        // Use name from request body or fallback to user's name
+        const { name } = req.body;
+        
+        // Create participant if not exists
+        const participantData = {
+          tastingId,
+          userId,
+          name: name || user.name || ''
+        };
+        await storage.createParticipant(participantData);
+      }
+
+      // Hole die aktualisierte Teilnehmerliste
+      const participants = await storage.getParticipantsByTasting(tastingId);
+      
+      // Sende die aktualisierte Teilnehmerliste an alle verbundenen Clients
+      const sockets = joinRooms.get(tastingId);
+      if (sockets && sockets.size > 0) {
+        const newParticipant = participants.find(p => p.userId === userId);
+        
+        // Erstelle die Broadcast-Nachricht für alle Clients
+        const message = JSON.stringify({
+          type: 'participants_updated',
+          participants: participants,
+          newParticipant: newParticipant
+        });
+
+        // Sende die Nachricht an alle verbundenen Clients
+        const socketsToRemove: WebSocket[] = [];
+        
+        sockets.forEach(ws => {
+          try {
+            if (ws.readyState === ws.OPEN) {
+              ws.send(message);
+            } else if (ws.readyState === ws.CLOSED || ws.readyState === ws.CLOSING) {
+              // Markiere geschlossene Verbindungen zur Entfernung
+              socketsToRemove.push(ws);
+            }
+          } catch (error) {
+            console.error('Fehler beim Senden der WebSocket-Nachricht:', error);
+            socketsToRemove.push(ws);
+          }
+        });
+
+        // Entferne geschlossene Verbindungen
+        if (socketsToRemove.length > 0) {
+          const room = joinRooms.get(tastingId);
+          if (room) {
+            socketsToRemove.forEach(ws => room.delete(ws));
+            if (room.size === 0) {
+              joinRooms.delete(tastingId);
+            }
+          }
+        }
+      }
+      
+      // Return success response
+      res.status(200).json({ success: true });
     } catch (error) {
       res.status(500).json({ error: (error as Error).message });
     }
@@ -693,33 +955,183 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get participants for a tasting
   app.get("/api/tastings/:id/participants", ensureAuthenticated, async (req, res) => {
     try {
-      const tastingId = parseInt(req.params.id);
+      const participants = await storage.getParticipantsByTasting(parseInt(req.params.id));
+      res.json(participants);
+    } catch (error) {
+      console.error('Error fetching participants:', error);
+      res.status(500).json({ error: 'Error fetching participants' });
+    }
+  });
+
+  // Remove participant from tasting (host only)
+  app.delete("/api/tastings/:tastingId/participants/:userId", ensureAuthenticated, async (req, res) => {
+    // Log the request for debugging
+    const requestInfo = {
+      method: req.method,
+      url: req.url,
+      params: req.params,
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      timestamp: new Date().toISOString()
+    };
+    console.log('Remove participant request:', requestInfo);
+
+    try {
+      // Parse and validate IDs
+      const tastingId = parseInt(req.params.tastingId, 10);
+      const userId = parseInt(req.params.userId, 10);
       
-      const tasting = await storage.getTasting(tastingId);
-      if (!tasting) {
-        return res.status(404).json({ error: "Tasting not found" });
+      if (isNaN(tastingId) || isNaN(userId)) {
+        const errorMsg = 'Ungültige Tasting-ID oder Benutzer-ID';
+        console.error(errorMsg, { 
+          tastingId: req.params.tastingId, 
+          userId: req.params.userId,
+          ...requestInfo
+        });
+        return res.status(400).json({ error: errorMsg });
+      }
+
+      // Check if user is authenticated
+      if (!req.user) {
+        const errorMsg = 'Nicht authentifizierter Benutzer';
+        console.error(errorMsg, requestInfo);
+        return res.status(401).json({ error: errorMsg });
       }
       
-      const participants = await storage.getParticipantsByTasting(tastingId);
+      // Check if tasting exists
+      const tasting = await storage.getTasting(tastingId);
+      if (!tasting) {
+        const errorMsg = 'Tasting nicht gefunden';
+        console.error(errorMsg, { tastingId, ...requestInfo });
+        return res.status(404).json({ error: errorMsg });
+      }
       
-      // Add user info to each participant
-      const participantsWithUserInfo = await Promise.all(
-        participants.map(async (participant) => {
-          const user = await storage.getUser(participant.userId);
-          return { 
-            ...participant, 
-            user: user ? { 
-              id: user.id, 
-              name: user.name, 
-              email: user.email 
-            } : undefined 
-          };
-        })
-      );
+      // Check if user is the host
+      if (tasting.hostId !== req.user.id) {
+        const errorMsg = 'Nur der Veranstalter kann Teilnehmer entfernen';
+        console.error(errorMsg, { 
+          userId: req.user.id, 
+          tastingId,
+          hostId: tasting.hostId,
+          ...requestInfo 
+        });
+        return res.status(403).json({ error: errorMsg });
+      }
       
-      res.json(participantsWithUserInfo);
+      // Prevent self-removal
+      if (userId === req.user.id) {
+        const errorMsg = 'Sie können sich nicht selbst entfernen';
+        console.error(errorMsg, { userId, ...requestInfo });
+        return res.status(400).json({ error: errorMsg });
+      }
+      
+      // Remove participant with additional logging
+      console.log('Versuche Teilnehmer zu entfernen:', { 
+        tastingId, 
+        userId,
+        typeTastingId: typeof tastingId,
+        typeUserId: typeof userId,
+        ...requestInfo 
+      });
+      
+      try {
+        // Convert to strings to ensure consistent handling in storage layer
+        const tastingIdStr = String(tastingId);
+        const userIdStr = String(userId);
+        
+        console.log('Konvertierte IDs für removeParticipant:', {
+          original: { tastingId, userId },
+          converted: { tastingId: tastingIdStr, userId: userIdStr }
+        });
+        
+        const removed = await storage.removeParticipant(tastingIdStr, userIdStr);
+        
+        if (!removed) {
+          const errorMsg = 'Teilnehmer konnte nicht entfernt werden';
+          console.error(errorMsg, { 
+            tastingId, 
+            userId,
+            typeTastingId: typeof tastingId,
+            typeUserId: typeof userId,
+            ...requestInfo 
+          });
+          return res.status(404).json({ error: 'Teilnehmer nicht gefunden' });
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Unbekannter Fehler';
+        console.error('Fehler beim Aufruf von storage.removeParticipant:', {
+          error: errorMsg,
+          stack: error instanceof Error ? error.stack : undefined,
+          tastingId,
+          userId,
+          typeTastingId: typeof tastingId,
+          typeUserId: typeof userId,
+          ...requestInfo
+        });
+        return res.status(400).json({ error: 'Ungültige Parameter beim Entfernen des Teilnehmers' });
+      }
+      
+      // Notify all clients in the tasting room via WebSocket
+      if (joinRooms.has(tastingId)) {
+        const message = JSON.stringify({
+          type: 'participant_removed',
+          userId: userId,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Send message to all connected clients
+        const clients = joinRooms.get(tastingId) || [];
+        for (const client of clients) {
+          if (client.readyState === 1) {
+            try {
+              client.send(message);
+            } catch (error: unknown) {
+              const errorMsg = error instanceof Error ? error.message : 'Unbekannter Fehler';
+              console.error('Fehler beim Senden der WebSocket-Nachricht:', errorMsg, {
+                clientId: client.url,
+                ...requestInfo
+              });
+            }
+          }
+        }
+      }
+      
+      console.log('Teilnehmer erfolgreich entfernt', { tastingId, userId, ...requestInfo });
+      res.status(200).json({ success: true });
+      
     } catch (error) {
-      res.status(500).json({ error: (error as Error).message });
+      const errorMsg = error instanceof Error ? error.message : 'Unbekannter Fehler';
+      console.error('Fehler beim Entfernen des Teilnehmers:', errorMsg, requestInfo);
+      res.status(500).json({ error: 'Interner Serverfehler beim Entfernen des Teilnehmers' });
+    }
+  });
+
+  // Leave tasting (participant self-removal)
+  app.post("/api/tastings/:id/leave", ensureAuthenticated, async (req, res) => {
+    try {
+      const tastingId = parseInt(req.params.id, 10);
+      const userId = req.user!.id;
+      if (isNaN(tastingId)) return res.status(400).json({ error: 'Ungültige Tasting-ID' });
+
+      const removed = await storage.removeParticipant(String(tastingId), String(userId));
+      // Wenn bereits entfernt, antworte trotzdem ok, um Fehler im Client zu vermeiden
+      if (!removed) return res.json({ ok: false });
+
+      // Notify waiting room clients
+      if (joinRooms.has(tastingId)) {
+        const message = JSON.stringify({ type: 'participant_removed', userId, timestamp: new Date().toISOString() });
+        const clients = joinRooms.get(tastingId) || [];
+        for (const client of clients) {
+          if (client.readyState === 1) {
+            try { client.send(message); } catch {}
+          }
+        }
+      }
+
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('Error leaving tasting:', error);
+      return res.status(500).json({ error: 'Server error' });
     }
   });
 
@@ -823,35 +1235,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Endpoint to search wines from vinaturel.de API
-  app.get("/api/wines/search", async (req, res) => {
+  // Ändere von API- zu Datenbank-Suche
+  app.get('/api/wines/search', async (req, res) => {
+    const { q } = req.query;
+    if (!q || typeof q !== 'string') {
+      return res.status(400).json({ error: 'Invalid query' });
+    }
+    
     try {
-      const query = req.query.q as string;
-      
-      if (!query) {
-        return res.status(400).json({ error: "Query parameter 'q' is required" });
-      }
-      
-      // Use vinaturel API
-      const credentials = {
-        username: process.env.VINATUREL_USERNAME || 'verena.oleksyn@web.de',
-        password: process.env.VINATUREL_PASSWORD || 'Vinaturel123',
-        apiKey: process.env.VINATUREL_API_KEY || 'SWSCT5QYLV9K9CQMJ_XI1Q176W'
-      };
-      
-      console.log('Searching for wines with query:', query);
-      
-      // Direkter Aufruf der Vinaturel API mit dem Suchbegriff
-      const wines = await VinaturelAPI.fetchWines(credentials, query);
-      console.log(`Found ${wines.length} matching wines from Vinaturel API`);
-      
-      return res.json(wines);
+      const results = await storage.searchWines(q);
+      res.json(results);
     } catch (error) {
-      console.error('Error searching wines:', error);
-      res.status(500).json({ error: (error as Error).message });
+      console.error('Search error:', error);
+      res.status(500).json({ error: 'Search failed' });
     }
   });
-  
+
   // Endpoint to get all wines from vinaturel.de API
   app.get("/api/wines/all", async (req, res) => {
     try {
@@ -873,7 +1272,136 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/debug/db-check', async (req, res) => {
+    try {
+      const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+      const pgResult = await pool.query('SELECT 1+1 AS result');
+      await pool.end();
+      
+      const drizzleResult = await db.select().from(users).limit(1);
+      
+      res.json({
+        pgConnection: pgResult.rows[0].result === 2 ? 'OK' : 'FEHLER',
+        drizzleConnection: drizzleResult.length > 0 ? 'OK' : 'FEHLER',
+        env: {
+          DATABASE_URL: process.env.DATABASE_URL ? 'gesetzt' : 'nicht gesetzt',
+          NODE_ENV: process.env.NODE_ENV
+        }
+      });
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unbekannter Fehler';
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      
+      res.status(500).json({
+        error: errorMessage,
+        stack: errorStack,
+        rawError: error instanceof Error ? error.toString() : 'Unbekannter Fehler'
+      });
+    }
+  });
+
+  app.post('/api/tastings/:id/password', async (req, res) => {
+    try {
+      const tastingId = parseInt(req.params.id);
+      const { password } = req.body;
+      
+      const tasting = await storage.getTasting(tastingId);
+      if (!tasting) {
+        return res.status(404).json({ error: "Tasting not found" });
+      }
+      
+      if (tasting.password && tasting.password !== password) {
+        return res.status(401).json({ error: "Invalid Password" });
+      }
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error joining tasting:', error);
+      res.status(500).json({ error: 'Server error' });
+    }
+  });
+
+  // Delete tasting
+  app.delete("/api/tastings/:id", ensureAuthenticated, async (req, res) => {
+    try {
+      const tastingId = parseInt(req.params.id);
+      await storage.deleteTasting(tastingId);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
   const httpServer = createServer(app);
+  // WebSocket server for live participant updates on join page
+  const wss = new WebSocketServer({ server: httpServer, path: '/ws/join' });
+  wss.on('connection', async (socket, req) => {
+    try {
+      // Parse query parameters
+      const query = req.url?.split('?')[1] || '';
+      const params = new URLSearchParams(query);
+      const tastingId = parseInt(params.get('t') || '', 10);
+      const isHost = params.get('host') === 'true';
+      const userIdParam = params.get('u');
+      const userIdFromQuery = userIdParam ? parseInt(userIdParam, 10) : undefined;
+      
+      if (isNaN(tastingId)) {
+        console.error('Ungültige Tasting-ID:', tastingId);
+        socket.close();
+        return;
+      }
+
+      // Initialisiere den Raum, falls nicht vorhanden
+      if (!joinRooms.has(tastingId)) {
+        joinRooms.set(tastingId, new Set());
+      }
+
+      // Füge den Socket zum Raum hinzu
+      joinRooms.get(tastingId)!.add(socket);
+      
+      console.log(`Neue WebSocket-Verbindung für Tasting ${tastingId} (${isHost ? 'Host' : 'Teilnehmer'})`);
+
+      // Sende die aktuelle Teilnehmerliste an den Client
+      try {
+        const participants = await storage.getParticipantsByTasting(tastingId);
+        const message = JSON.stringify({
+          type: 'participants_updated',
+          participants: participants
+        });
+        
+        if (socket.readyState === socket.OPEN) {
+          socket.send(message);
+        }
+      } catch (error) {
+        console.error('Fehler beim Abrufen der Teilnehmerliste:', error);
+      }
+
+      // Cleanup bei Verbindungsabbruch
+      socket.on('close', async () => {
+        const room = joinRooms.get(tastingId);
+        if (room) {
+          room.delete(socket);
+          console.log(`Verbindung für Tasting ${tastingId} geschlossen (${isHost ? 'Host' : 'Teilnehmer'})`);
+          
+          // Entferne leere Räume
+          if (room.size === 0) {
+            joinRooms.delete(tastingId);
+          }
+        }
+      });
+
+      // Fehlerbehandlung
+      socket.on('error', (error) => {
+        console.error('WebSocket-Fehler:', error);
+      });
+
+    } catch (err) {
+      console.error('Fehler bei der WebSocket-Verbindung:', err);
+      if (socket.readyState === socket.OPEN) {
+        socket.close();
+      }
+    }
+  });
 
   return httpServer;
 }

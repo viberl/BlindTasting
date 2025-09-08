@@ -26,7 +26,7 @@ export function ProtectedRoute({
     return (
       <Route path={path}>
         <div className="flex items-center justify-center min-h-screen">
-          <Loader2 className="h-8 w-8 animate-spin text-[#4C0519]" />
+          <Loader2 className="h-8 w-8 animate-spin text-[#274E37]" />
         </div>
       </Route>
     );

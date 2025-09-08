@@ -33,16 +33,26 @@ import { Button } from "@/components/ui/button";
 import { Loader2, Search, Wine as WineIcon } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { countries as COUNTRY_LIST, countryToRegions } from "@/data/country-regions";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import VarietalCombobox from "@/components/wine/varietal-combobox";
+import { Checkbox } from "@/components/ui/checkbox";
 
 // Define schema for custom wine creation
-const customWineSchema = z.object({
-  name: z.string().min(1, "Name ist erforderlich"),
-  producer: z.string().min(1, "Produzent ist erforderlich"),
-  country: z.string().min(1, "Land ist erforderlich"),
-  region: z.string().min(1, "Region ist erforderlich"),
-  vintage: z.string().min(1, "Jahrgang ist erforderlich"),
-  varietals: z.string().min(1, "Mindestens eine Rebsorte ist erforderlich"),
-});
+const customWineSchema = z
+  .object({
+    name: z.string().min(1, "Name ist erforderlich"),
+    producer: z.string().min(1, "Produzent ist erforderlich"),
+    country: z.string().min(1, "Land ist erforderlich"),
+    region: z.string().min(1, "Region ist erforderlich"),
+    vintage: z.string().optional(),
+    noVintage: z.boolean().default(false),
+    varietals: z.array(z.string()).min(1, "Mindestens eine Rebsorte ist erforderlich").max(3, "Maximal 3 Rebsorten"),
+  })
+  .refine(
+    (data) => data.noVintage || (!!data.vintage && /^\d{4}$/.test(String(data.vintage))),
+    { path: ["vintage"], message: "Bitte 4-stelligen Jahrgang eingeben" }
+  );
 
 type CustomWineFormData = z.infer<typeof customWineSchema>;
 
@@ -55,25 +65,36 @@ type SearchFormData = z.infer<typeof searchSchema>;
 
 // Interface for wine data from vinaturel API
 interface VinaturelWine {
-  id: string;
+  id: string | number;
   name: string;
   producer: string;
   country: string;
   region: string;
   vintage: string | number;
   varietals: string[];
+  varietal1?: string;
+  varietal2?: string | null;
+  varietal3?: string | null;
   price?: number;
-  imageUrl?: string;
+  imageUrl?: string | null;
   description?: string;
+  articleNumber?: string;
+  externalId?: string;
+  volumeMl?: number | null;
+  productUrl?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 interface AddWineDialogProps {
   flightId: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onWineAdded?: () => void;
+  refetchFlights?: () => Promise<any>;
 }
 
-export default function AddWineDialog({ flightId, open, onOpenChange }: AddWineDialogProps) {
+export default function AddWineDialog({ flightId, open, onOpenChange, onWineAdded, refetchFlights }: AddWineDialogProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [searchMode, setSearchMode] = useState<"vinaturel" | "custom">("vinaturel");
@@ -83,15 +104,20 @@ export default function AddWineDialog({ flightId, open, onOpenChange }: AddWineD
   // Form for custom wine creation
   const customForm = useForm<CustomWineFormData>({
     resolver: zodResolver(customWineSchema),
+    mode: "onChange",
     defaultValues: {
       name: "",
       producer: "",
       country: "",
       region: "",
       vintage: "",
-      varietals: "",
+      noVintage: false,
+      varietals: [],
     },
   });
+
+  const selectedCountry = customForm.watch("country");
+  const availableRegions = selectedCountry ? countryToRegions[selectedCountry] || [] : [];
 
   // Form for search functionality
   const searchForm = useForm<SearchFormData>({
@@ -106,12 +132,14 @@ export default function AddWineDialog({ flightId, open, onOpenChange }: AddWineD
     data: searchResults,
     isLoading: isSearching,
     refetch,
-  } = useQuery<{ wines: VinaturelWine[] }>({
-    queryKey: ["/api/wines/search", searchQuery],
-    queryFn: async () => {
-      if (!searchQuery) return { wines: [] };
-      const res = await apiRequest("GET", `/api/wines/search?q=${encodeURIComponent(searchQuery)}`);
-      return res.json();
+  } = useQuery({
+    queryKey: ["vinaturel-wines", searchQuery],
+    queryFn: async (): Promise<{ data: VinaturelWine[] }> => {
+      if (!searchQuery) return { data: [] };
+      const res = await apiRequest("GET", `/api/vinaturel/search?q=${encodeURIComponent(searchQuery)}`);
+      const json = await res.json();
+      // Return the data in the expected format
+      return { data: json.data?.data || [] };
     },
     enabled: searchQuery.length > 0,
   });
@@ -122,21 +150,15 @@ export default function AddWineDialog({ flightId, open, onOpenChange }: AddWineD
       const response = await apiRequest("POST", `/api/flights/${flightId}/wines`, wineData);
       return response.json();
     },
-    onSuccess: (newWine) => {
+    onSuccess: async (newWine) => {
       toast({
         title: "Wein hinzugefügt",
         description: "Der Wein wurde erfolgreich zum Flight hinzugefügt",
       });
-      // Genauere Cache-Invalidierung für den spezifischen Flight 
-      // und die allgemeine Tastings-Abfrage
-      queryClient.invalidateQueries({ queryKey: [`/api/flights/${flightId}/wines`] });
-      queryClient.invalidateQueries({ queryKey: [`/api/tastings`] });
-      // Wichtig: Spezifische Invalidierung für die Flights der Verkostung
-      const tastingId = newWine.tastingId;
-      if (tastingId) {
-        queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
+      if (refetchFlights) {
+        await refetchFlights();
       }
-      
+      if (onWineAdded) onWineAdded();
       console.log("Wine added successfully:", newWine);
       customForm.reset();
       setSearchQuery("");
@@ -154,18 +176,20 @@ export default function AddWineDialog({ flightId, open, onOpenChange }: AddWineD
 
   // Handle search submission
   const onSearchSubmit = (data: SearchFormData) => {
-    setSearchQuery(data.query);
-    refetch();
+    if (data.query.trim()) {
+      setSearchQuery(data.query);
+      // Clear previous results before new search
+      queryClient.setQueryData(["vinaturel-wines", data.query], { data: [] });
+      refetch();
+    }
   };
 
   // Handle custom wine submission
   const onCustomSubmit = (data: CustomWineFormData) => {
-    // Convert varietals string to array
-    const varietalsArray = data.varietals.split(",").map(v => v.trim());
-    
     addWineMutation.mutate({
       ...data,
-      varietals: varietalsArray,
+      vintage: data.noVintage ? "Kein Jahrgang" : String(data.vintage || ""),
+      varietals: data.varietals,
     });
   };
 
@@ -173,13 +197,30 @@ export default function AddWineDialog({ flightId, open, onOpenChange }: AddWineD
   const onVinaturelSelect = () => {
     if (!selectedWine) return;
 
+    // Create varietals array from available sources
+    let varietals = Array.isArray(selectedWine.varietals) 
+      ? selectedWine.varietals 
+      : [
+          selectedWine.varietal1,
+          selectedWine.varietal2,
+          selectedWine.varietal3
+        ].filter(Boolean) as string[];
+    // limit to max 3 varietals
+    varietals = varietals.slice(0, 3);
+
     addWineMutation.mutate({
       name: selectedWine.name,
       producer: selectedWine.producer,
       country: selectedWine.country,
       region: selectedWine.region,
       vintage: String(selectedWine.vintage),
-      varietals: selectedWine.varietals,
+      varietals: varietals,
+      articleNumber: selectedWine.articleNumber,
+      externalId: selectedWine.externalId || String(selectedWine.id),
+      volumeMl: selectedWine.volumeMl,
+      productUrl: selectedWine.productUrl,
+      imageUrl: selectedWine.imageUrl,
+      isCustom: false
     });
   };
 
@@ -219,7 +260,7 @@ export default function AddWineDialog({ flightId, open, onOpenChange }: AddWineD
                 />
                 <Button 
                   type="submit" 
-                  className="bg-[#4C0519] hover:bg-[#3A0413]"
+                  className="bg-[#4C0274E37519] hover:bg-[#3A0413]"
                   disabled={isSearching}
                 >
                   {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : "Suchen"}
@@ -230,32 +271,67 @@ export default function AddWineDialog({ flightId, open, onOpenChange }: AddWineD
             <div className="h-[300px] overflow-y-auto border rounded-md p-2">
               {isSearching ? (
                 <div className="flex items-center justify-center h-full">
-                  <Loader2 className="h-6 w-6 animate-spin text-[#4C0519]" />
+                  <Loader2 className="h-6 w-6 animate-spin text-[#274E37]" />
                 </div>
-              ) : searchResults?.wines && searchResults.wines.length > 0 ? (
+              ) : searchResults?.data && searchResults.data.length > 0 ? (
                 <div className="grid gap-2">
-                  {searchResults.wines.map((wine) => (
-                    <Card 
-                      key={wine.id} 
-                      className={`cursor-pointer hover:bg-gray-50 transition-colors ${selectedWine?.id === wine.id ? 'border-[#4C0519] border-2' : ''}`}
-                      onClick={() => setSelectedWine(wine)}
-                    >
-                      <CardContent className="p-3 flex items-start gap-3">
-                        <div className="h-10 w-10 flex items-center justify-center bg-[#4C0519] text-white rounded-full flex-shrink-0">
-                          <WineIcon className="h-5 w-5" />
-                        </div>
-                        <div className="flex-1">
-                          <div className="font-medium">{wine.producer} {wine.name}</div>
-                          <div className="text-sm text-gray-500">{wine.region}, {wine.country}, {wine.vintage}</div>
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {wine.varietals.map((varietal, i) => (
-                              <Badge key={i} variant="outline" className="text-xs">{varietal}</Badge>
-                            ))}
+                  {searchResults.data.map((wine: VinaturelWine) => {
+                    // Debug-Ausgabe
+                    console.log('Rendering wine:', wine);
+                    return (
+                      <Card 
+                        key={wine.id} 
+                        className={`cursor-pointer hover:bg-gray-50 transition-colors ${selectedWine?.id === wine.id ? 'border-[#4C05274E3719] border-2' : ''}`}
+                        onClick={() => setSelectedWine(wine)}
+                      >
+                        <CardContent className="p-3 flex items-start gap-3">
+                          {wine.imageUrl ? (
+                            <div className="h-16 w-10 overflow-hidden flex-shrink-0">
+                              <img 
+                                src={wine.imageUrl} 
+                                alt={wine.name}
+                                className="w-full h-full object-cover object-bottom"
+                                onError={(e) => {
+                                  const target = e.target as HTMLImageElement;
+                                  target.style.display = 'none';
+                                  // Fallback zum Wein-Icon, wenn das Bild nicht geladen werden kann
+                                  const fallback = document.createElement('div');
+                                  fallback.className = 'h-10 w-10 flex items-center justify-center bg-[#4C0519] text-white flex-shrink-0';
+                                  const icon = document.createElement('wine-icon');
+                                  icon.className = 'h-5 w-5';
+                                  fallback.appendChild(icon);
+                                  target.parentNode?.insertBefore(fallback, target.nextSibling);
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <div className="h-10 w-10 flex items-center justify-center bg-[#4C0519] text-white rounded-full flex-shrink-0">
+                              <WineIcon className="h-5 w-5" />
+                            </div>
+                          )}
+                          <div className="flex-1">
+                            <div className="font-medium">{wine.producer} {wine.name}</div>
+                            <div className="text-sm text-gray-500">
+                              {wine.region}, {wine.country}, {wine.vintage}
+                              {wine.articleNumber && (
+                                <span className="ml-2 px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded">
+                                  Art.-Nr.: {wine.articleNumber}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {Array.isArray(wine.varietals) && wine.varietals.map((varietal: string, i: number) => (
+                                <Badge key={i} variant="outline" className="text-xs">{varietal}</Badge>
+                              ))}
+                              {!wine.varietals && wine.varietal1 && (
+                                <Badge variant="outline" className="text-xs">{wine.varietal1}</Badge>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               ) : searchQuery ? (
                 <div className="flex flex-col items-center justify-center h-full text-center">
@@ -309,9 +385,27 @@ export default function AddWineDialog({ flightId, open, onOpenChange }: AddWineD
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Land</FormLabel>
-                        <FormControl>
-                          <Input placeholder="z.B. Frankreich" {...field} />
-                        </FormControl>
+                        <Select
+                          value={field.value || ""}
+                          onValueChange={(val) => {
+                            field.onChange(val);
+                            // reset region when country changes
+                            customForm.setValue("region", "");
+                          }}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Land auswählen" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {COUNTRY_LIST.map((c) => (
+                              <SelectItem key={c} value={c}>
+                                {c}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -323,37 +417,94 @@ export default function AddWineDialog({ flightId, open, onOpenChange }: AddWineD
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Region</FormLabel>
-                        <FormControl>
-                          <Input placeholder="z.B. Bordeaux" {...field} />
-                        </FormControl>
+                        <Select
+                          value={field.value || ""}
+                          onValueChange={field.onChange}
+                          disabled={!selectedCountry}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Region auswählen" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {availableRegions.map((r) => (
+                              <SelectItem key={r} value={r}>
+                                {r}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
 
-                  <FormField
-                    control={customForm.control}
-                    name="vintage"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Jahrgang</FormLabel>
-                        <FormControl>
-                          <Input placeholder="z.B. 2018" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  <div className="grid grid-cols-[1fr_auto] gap-3 items-end">
+                    <FormField
+                      control={customForm.control}
+                      name="vintage"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Jahrgang</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="z.B. 2018"
+                              value={field.value || ""}
+                              onChange={(e) => {
+                                const onlyDigits = e.target.value.replace(/[^0-9]/g, "").slice(0, 4);
+                                field.onChange(onlyDigits);
+                              }}
+                              disabled={customForm.watch("noVintage")}
+                              inputMode="numeric"
+                              pattern="\\d{4}"
+                              maxLength={4}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={customForm.control}
+                      name="noVintage"
+                      render={({ field }) => (
+                        <FormItem className="mb-2">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox
+                              checked={field.value}
+                              onCheckedChange={(v) => {
+                                const checked = Boolean(v);
+                                field.onChange(checked);
+                                if (checked) customForm.setValue("vintage", "");
+                              }}
+                              id="noVintage"
+                            />
+                            <label htmlFor="noVintage" className="text-sm leading-none">
+                              Kein Jahrgang
+                            </label>
+                          </div>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
 
                   <FormField
                     control={customForm.control}
                     name="varietals"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Rebsorten</FormLabel>
-                        <FormControl>
-                          <Input placeholder="z.B. Cabernet Sauvignon, Merlot" {...field} />
-                        </FormControl>
+                        <FormLabel>Rebsorten (max. 3)</FormLabel>
+                        <VarietalCombobox
+                          value={field.value || []}
+                          onChange={field.onChange}
+                          maxSelected={3}
+                        />
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {(field.value || []).map((v: string) => (
+                            <Badge key={v} variant="secondary">{v}</Badge>
+                          ))}
+                        </div>
                         <FormMessage />
                       </FormItem>
                     )}

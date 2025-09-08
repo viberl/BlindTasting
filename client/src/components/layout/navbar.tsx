@@ -28,10 +28,10 @@ export default function Navbar() {
     <header className="bg-white border-b sticky top-0 z-50">
       <div className="container mx-auto p-4 flex justify-between items-center">
         <div className="flex items-center gap-2">
-          <Wine className="h-6 w-6 text-[#4C0519]" />
+          <Wine className="h-6 w-6 text-[#274E37]" />
           <button
             onClick={() => navigate("/")}
-            className="text-xl font-bold text-[#4C0519]"
+            className="text-xl font-bold text-[#274E37]"
           >
             BlindSip
           </button>
@@ -58,6 +58,13 @@ export default function Navbar() {
                   <span>Meine Tastings</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
+                  className="cursor-pointer"
+                  onClick={() => navigate("/profile")}
+                >
+                  <User className="mr-2 h-4 w-4" />
+                  <span>Mein Profil</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
                   className="cursor-pointer text-red-600"
                   onClick={handleLogout}
                 >
@@ -69,7 +76,7 @@ export default function Navbar() {
           ) : (
             <Button
               onClick={() => navigate("/auth")}
-              className="bg-[#4C0519] hover:bg-[#3A0413]"
+              className="bg-[#274E37] hover:bg-[#1E3E2B]"
             >
               Anmelden
             </Button>

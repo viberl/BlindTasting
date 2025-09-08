@@ -5,14 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { useToast } from "@/hooks/use-toast";
 import { Clock, Play, Square, AlertTriangle } from "lucide-react";
 
 interface FlightTimerProps {
   flightId: number;
   timeLimit: number; // in seconds
-  startedAt: string | null;
-  completedAt: string | null;
+  startedAt: string | Date | null;
+  completedAt: string | Date | null;
   isHost: boolean;
   onComplete?: () => void;
 }
@@ -21,12 +20,11 @@ export default function FlightTimer({ flightId, timeLimit, startedAt, completedA
   const [timeRemaining, setTimeRemaining] = useState<number>(timeLimit);
   const [isActive, setIsActive] = useState<boolean>(!!startedAt && !completedAt);
   const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
-  const { toast } = useToast();
 
   // Calculate initial time remaining
   useEffect(() => {
     if (startedAt && !completedAt) {
-      const startTime = new Date(startedAt).getTime();
+      const startTime = new Date(startedAt as any).getTime();
       const now = new Date().getTime();
       const elapsedSeconds = Math.floor((now - startTime) / 1000);
       const remaining = Math.max(0, timeLimit - elapsedSeconds);
@@ -57,16 +55,12 @@ export default function FlightTimer({ flightId, timeLimit, startedAt, completedA
       }, 1000);
     } else if (isActive && timeRemaining === 0) {
       setIsActive(false);
-      toast({
-        title: "Time's up!",
-        description: "The flight time limit has been reached.",
-      });
     }
 
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isActive, timeRemaining, toast]);
+  }, [isActive, timeRemaining]);
 
   const startFlightMutation = useMutation({
     mutationFn: async () => {
@@ -76,17 +70,9 @@ export default function FlightTimer({ flightId, timeLimit, startedAt, completedA
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/tastings`] });
       setIsActive(true);
-      toast({
-        title: "Flight started",
-        description: "The timer has started for this flight.",
-      });
     },
     onError: (error: Error) => {
-      toast({
-        title: "Failed to start flight",
-        description: error.message,
-        variant: "destructive",
-      });
+      console.error('Failed to start flight:', error.message);
     },
   });
 
@@ -99,21 +85,13 @@ export default function FlightTimer({ flightId, timeLimit, startedAt, completedA
       queryClient.invalidateQueries({ queryKey: [`/api/tastings`] });
       setIsActive(false);
       setTimeRemaining(0);
-      toast({
-        title: "Flight completed",
-        description: "All wines have been revealed and scores calculated.",
-      });
       
       if (onComplete) {
         onComplete();
       }
     },
     onError: (error: Error) => {
-      toast({
-        title: "Failed to complete flight",
-        description: error.message,
-        variant: "destructive",
-      });
+      console.error('Failed to complete flight:', error.message);
     },
   });
 
@@ -153,10 +131,10 @@ export default function FlightTimer({ flightId, timeLimit, startedAt, completedA
           <div className="flex items-center justify-between">
             <div className="flex items-center">
               <Clock className="h-5 w-5 text-gray-500 mr-2" />
-              <span className="font-medium">Flight Complete</span>
+              <span className="font-medium">Flight abgeschlossen</span>
             </div>
             <span className="text-sm text-gray-500">
-              Completed at {new Date(completedAt).toLocaleTimeString()}
+              Abgeschlossen um {new Date(completedAt).toLocaleTimeString()}
             </span>
           </div>
         </CardContent>
@@ -172,7 +150,7 @@ export default function FlightTimer({ flightId, timeLimit, startedAt, completedA
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <Clock className="h-5 w-5 text-gray-500 mr-2" />
-                <span className="font-medium">Flight Timer</span>
+                <span className="font-medium">Flight-Timer</span>
               </div>
               <div className={`text-2xl font-bold ${timeRemaining < 60 ? 'text-red-600' : ''}`}>
                 {formatTime(timeRemaining)}
@@ -194,7 +172,7 @@ export default function FlightTimer({ flightId, timeLimit, startedAt, completedA
                     disabled={startFlightMutation.isPending}
                   >
                     <Play className="h-4 w-4 mr-2" />
-                    {startFlightMutation.isPending ? "Starting..." : "Start Flight"}
+                    {startFlightMutation.isPending ? "Startet..." : "Flight starten"}
                   </Button>
                 )}
                 
@@ -206,7 +184,7 @@ export default function FlightTimer({ flightId, timeLimit, startedAt, completedA
                     disabled={completeFlightMutation.isPending}
                   >
                     <Square className="h-4 w-4 mr-2" />
-                    {completeFlightMutation.isPending ? "Completing..." : "Complete Flight"}
+                    {completeFlightMutation.isPending ? "Schließt ab..." : "Flight abschließen"}
                   </Button>
                 )}
               </div>
@@ -214,13 +192,13 @@ export default function FlightTimer({ flightId, timeLimit, startedAt, completedA
             
             {!isHost && startedAt && !completedAt && (
               <p className="text-sm text-gray-500 text-center">
-                Flight in progress. Submit your guesses before time runs out!
+                Flight läuft. Geben Sie Ihre Tipps ab, bevor die Zeit abläuft!
               </p>
             )}
             
             {!isHost && !startedAt && (
               <p className="text-sm text-gray-500 text-center">
-                Waiting for host to start this flight...
+                Warten auf den Veranstalter, um diesen Flight zu starten...
               </p>
             )}
           </div>
@@ -232,16 +210,16 @@ export default function FlightTimer({ flightId, timeLimit, startedAt, completedA
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center">
               <AlertTriangle className="h-5 w-5 text-yellow-500 mr-2" />
-              End Flight Early?
+              Flight vorzeitig beenden?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              There is still time remaining on the flight timer. Are you sure you want to end this flight now? All wines will be revealed and scores will be calculated.
+              Es ist noch Zeit auf dem Flight-Timer übrig. Möchten Sie den Flight wirklich jetzt beenden? Alle Weine werden angezeigt und die Punkte berechnet.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
             <AlertDialogAction onClick={() => completeFlightMutation.mutate()}>
-              Yes, Complete Flight
+              Ja, Flight abschließen
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -15,6 +15,8 @@ type AuthContextType = {
   loginMutation: UseMutationResult<User, Error, LoginData>;
   logoutMutation: UseMutationResult<void, Error, void>;
   registerMutation: UseMutationResult<User, Error, RegisterData>;
+  updateProfile: UseMutationResult<User, Error, { name?: string; company?: string; profileImage?: string }>;
+  updatePassword: UseMutationResult<void, Error, { currentPassword: string; newPassword: string }>;
 };
 
 type LoginData = {
@@ -46,44 +48,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoading(true);
         console.log('Fetching user data...');
         
-        // Direkt nach der Session-ID im Cookie suchen (nur für Debug-Zwecke)
-        console.log('Vorhandene Cookies:', document.cookie);
+        // Check for session cookie
+        const hasSessionCookie = document.cookie.includes('connect.sid');
+        console.log('Session cookie present:', hasSessionCookie);
         
-        const response = await fetch('/api/user', {
-          credentials: 'include',
-          headers: {
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
-          }
-        });
-        
-        console.log('User fetch response:', response.status, response.statusText);
-        
-        // Versuchen, Header zu überprüfen
-        try {
-          const headerInfo = Array.from(response.headers.entries())
-            .filter(([key]) => ['set-cookie', 'content-type'].includes(key.toLowerCase()))
-            .map(([key, value]) => `${key}: ${value}`);
-          
-          if (headerInfo.length > 0) {
-            console.log('Response Headers:', headerInfo);
-          }
-        } catch (headerErr) {
-          console.log('Konnte Header nicht lesen:', headerErr);
+        if (!hasSessionCookie) {
+          setIsLoading(false);
+          setUser(null);
+          return;
         }
         
-        if (response.ok) {
-          const userData = await response.json();
-          console.log('User data received:', userData);
-          setUser(userData);
+        const response = await queryClient.fetchQuery({
+          queryKey: ['user'],
+          queryFn: () => fetchCurrentUser(),
+          retry: false // Don't retry on 401 errors
+        });
+
+        if (response) {
+          setUser(response);
+          setError(null);
         } else {
           setUser(null);
         }
-      } catch (err) {
-        console.error('Failed to fetch user:', err);
-        setError(err as Error);
+      } catch (error) {
+        console.error('Failed to fetch user:', error);
+        setError(error as Error);
         setUser(null);
+        
+        // Clear invalid session
+        if ((error as any)?.response?.status === 401) {
+          await queryClient.invalidateQueries({ queryKey: ['user'] });
+          document.cookie = 'connect.sid=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+        }
       } finally {
         setIsLoading(false);
       }
@@ -166,6 +162,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
   });
 
+  const updateProfile = useMutation({
+    mutationFn: async (payload: { name?: string; company?: string; profileImage?: string }) => {
+      const res = await apiRequest('PATCH', '/api/user', payload);
+      return await res.json();
+    },
+    onSuccess: (updated: User) => {
+      setUser(updated);
+      queryClient.invalidateQueries({ queryKey: ['user'] });
+      toast({ title: 'Profil aktualisiert' });
+    },
+    onError: (err: Error) => {
+      setError(err);
+      toast({ title: 'Profil konnte nicht aktualisiert werden', description: err.message, variant: 'destructive' });
+    }
+  });
+
+  const updatePassword = useMutation({
+    mutationFn: async (payload: { currentPassword: string; newPassword: string }) => {
+      await apiRequest('POST', '/api/user/password', payload);
+    },
+    onSuccess: () => {
+      toast({ title: 'Passwort geändert' });
+    },
+    onError: (err: Error) => {
+      setError(err);
+      toast({ title: 'Passwortänderung fehlgeschlagen', description: err.message, variant: 'destructive' });
+    }
+  });
+
   return (
     <AuthContext.Provider
       value={{
@@ -175,6 +200,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loginMutation,
         logoutMutation,
         registerMutation,
+        updateProfile,
+        updatePassword,
       }}
     >
       {children}
@@ -188,4 +215,14 @@ export function useAuth() {
     throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;
+}
+
+// Helper function to fetch current user
+async function fetchCurrentUser() {
+  const response = await apiRequest('GET', '/api/user');
+  if (response.ok) {
+    return await response.json();
+  } else {
+    throw new Error('Failed to fetch current user');
+  }
 }

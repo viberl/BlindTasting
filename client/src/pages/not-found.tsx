@@ -10,7 +10,7 @@ export default function NotFound() {
       <div className="max-w-md">
         <div className="mb-6 flex justify-center">
           <div className="bg-red-50 p-4 rounded-full">
-            <Wine className="h-12 w-12 text-[#4C0519]" />
+            <Wine className="h-12 w-12 text-[#274E37]" />
           </div>
         </div>
         
@@ -23,7 +23,7 @@ export default function NotFound() {
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <Button 
             onClick={() => navigate('/')}
-            className="bg-[#4C0519] hover:bg-[#3A0413]"
+            className="bg-[#274E37] hover:bg-[#e65b2d]"
           >
             Zurück zur Startseite
           </Button>

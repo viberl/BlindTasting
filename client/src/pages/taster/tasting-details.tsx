@@ -5,9 +5,10 @@ import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { 
   Tasting,
-  Flight,
+  Flight as BaseFlight,
   ScoringRule,
-  Participant
+  Participant,
+  Wine
 } from "@shared/schema";
 import {
   Card,
@@ -51,17 +52,21 @@ export default function TastingDetails() {
     refetchInterval: 10000, // Refetch every 10 seconds
   });
 
+  type Flight = BaseFlight & { wines: Wine[] };
+
   const { data: flights, isLoading: flightsLoading } = useQuery<Flight[]>({
     queryKey: [`/api/tastings/${tastingId}/flights`],
     refetchInterval: 10000, // Refetch every 10 seconds
-    onSuccess: (data) => {
-      // Find the current active flight (started but not completed)
-      const activeFlightIndex = data.findIndex(flight => flight.startedAt && !flight.completedAt);
+  });
+
+  useEffect(() => {
+    if (flights && flights.length > 0) {
+      const activeFlightIndex = flights.findIndex(flight => flight.startedAt && !flight.completedAt);
       if (activeFlightIndex >= 0) {
         setSelectedFlightIndex(activeFlightIndex);
       }
     }
-  });
+  }, [flights]);
 
   const { data: scoringRules } = useQuery<ScoringRule>({
     queryKey: [`/api/tastings/${tastingId}/scoring`],
@@ -126,7 +131,7 @@ export default function TastingDetails() {
   if (tastingLoading || flightsLoading || participantsLoading) {
     return (
       <div className="flex items-center justify-center h-[50vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-[#4C0519]" />
+        <Loader2 className="h-8 w-8 animate-spin text-[#274E37]" />
       </div>
     );
   }
@@ -171,8 +176,8 @@ export default function TastingDetails() {
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <div>
                 <div className="flex items-center gap-2 mb-2">
-                  <CardTitle className="text-2xl font-display text-[#4C0519]">{tasting.name}</CardTitle>
-                  <Badge variant="success" className="bg-green-100 text-green-800">Active</Badge>
+                  <CardTitle className="text-2xl font-display text-[#274E37]">{tasting.name}</CardTitle>
+                  <Badge variant="secondary" className="bg-green-100 text-green-800">Active</Badge>
                 </div>
                 <CardDescription>
                   {isParticipant 
@@ -183,7 +188,7 @@ export default function TastingDetails() {
               <div>
                 {!isParticipant ? (
                   <Button
-                    className="bg-[#4C0519] hover:bg-[#3A0413]"
+                    className="bg-[#274E37] hover:bg-[#e65b2d]"
                     onClick={handleJoin}
                     disabled={joinTastingMutation.isPending}
                   >
@@ -191,7 +196,7 @@ export default function TastingDetails() {
                   </Button>
                 ) : canSubmitGuesses ? (
                   <Button
-                    className="bg-[#4C0519] hover:bg-[#3A0413]"
+                    className="bg-[#274E37] hover:bg-[#e65b2d]"
                     onClick={handleSubmitGuesses}
                   >
                     Submit Guesses
@@ -236,7 +241,7 @@ export default function TastingDetails() {
                 <FlightStatus
                   tastingId={tastingId}
                   flight={selectedFlight}
-                  currentUserId={user?.id}
+                  currentUserId={user?.id ?? 0}
                   isHost={false}
                 />
 
@@ -249,7 +254,7 @@ export default function TastingDetails() {
                         variant={selectedFlightIndex === index ? "default" : "outline"}
                         size="sm"
                         onClick={() => setSelectedFlightIndex(index)}
-                        className={selectedFlightIndex === index ? "bg-[#4C0519] hover:bg-[#3A0413]" : ""}
+                        className={selectedFlightIndex === index ? "bg-[#274E37] hover:bg-[#e65b2d]" : ""}
                       >
                         Flight {index + 1}
                       </Button>
@@ -262,7 +267,7 @@ export default function TastingDetails() {
                   <Card className="mt-6">
                     <CardContent className="pt-6">
                       <div className="flex flex-col items-center text-center space-y-4">
-                        <WineIcon className="h-12 w-12 text-[#4C0519]" />
+                        <WineIcon className="h-12 w-12 text-[#274E37]" />
                         <div>
                           <h3 className="text-xl font-medium">Ready to submit your guesses?</h3>
                           <p className="text-gray-500 mt-2">
@@ -270,7 +275,7 @@ export default function TastingDetails() {
                           </p>
                         </div>
                         <Button
-                          className="bg-[#4C0519] hover:bg-[#3A0413] mt-2"
+                          className="bg-[#274E37] hover:bg-[#e65b2d] mt-2"
                           onClick={handleSubmitGuesses}
                         >
                           Submit Guesses
@@ -291,7 +296,7 @@ export default function TastingDetails() {
                         {selectedFlight.wines?.map((wine) => (
                           <div key={wine.id} className="bg-gray-50 rounded-lg p-4">
                             <div className="flex items-center mb-2">
-                              <span className="h-6 w-6 flex items-center justify-center bg-[#4C0519] text-white rounded-full text-sm font-medium mr-2">
+                              <span className="h-6 w-6 flex items-center justify-center bg-[#274E37] text-white rounded-full text-sm font-medium mr-2">
                                 {wine.letterCode}
                               </span>
                               <h4 className="font-medium">{wine.name}</h4>
@@ -364,7 +369,7 @@ export default function TastingDetails() {
             <Button
               onClick={handlePasswordSubmit}
               disabled={!passwordInput || joinTastingMutation.isPending}
-              className="bg-[#4C0519] hover:bg-[#3A0413]"
+              className="bg-[#274E37] hover:bg-[#e65b2d]"
             >
               {joinTastingMutation.isPending ? "Joining..." : "Join"}
             </Button>

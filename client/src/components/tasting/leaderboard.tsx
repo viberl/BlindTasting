@@ -55,7 +55,7 @@ export default function Leaderboard({ tastingId, displayCount, currentUserId }: 
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Leaderboard</CardTitle>
+          <CardTitle className="text-lg">Bestenliste</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           {[1, 2, 3, 4, 5].map((i) => (
@@ -77,12 +77,12 @@ export default function Leaderboard({ tastingId, displayCount, currentUserId }: 
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Leaderboard</CardTitle>
+          <CardTitle className="text-lg">Bestenliste</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="text-center py-8">
             <User className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500">No participants yet</p>
+            <p className="text-gray-500">Noch keine Teilnehmer</p>
           </div>
         </CardContent>
       </Card>
@@ -98,7 +98,7 @@ export default function Leaderboard({ tastingId, displayCount, currentUserId }: 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">Leaderboard</CardTitle>
+        <CardTitle className="text-lg">Bestenliste</CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
         {displayedParticipants.map((participant, index) => {
@@ -111,7 +111,7 @@ export default function Leaderboard({ tastingId, displayCount, currentUserId }: 
               className={`
                 p-3 rounded-md border flex items-center space-x-3
                 ${getRankColor(rank)}
-                ${isCurrentUser ? 'ring-2 ring-[#4C0519] ring-opacity-50' : ''}
+                ${isCurrentUser ? 'ring-2 ring-[#274E37] ring-opacity-50' : ''}
               `}
             >
               <div className={`
@@ -126,19 +126,19 @@ export default function Leaderboard({ tastingId, displayCount, currentUserId }: 
                 <div className="flex items-center">
                   <p className="font-medium">
                     {participant.user.name}
-                    {isCurrentUser && <span className="ml-2 text-xs">(You)</span>}
+                    {isCurrentUser && <span className="ml-2 text-xs">(Sie)</span>}
                   </p>
                 </div>
                 <p className="text-xs opacity-70">
-                  Joined {new Date(participant.joinedAt).toLocaleDateString()}
+                  Beigetreten am {new Date(participant.joinedAt).toLocaleDateString()}
                 </p>
               </div>
               
               <Badge className={`
                 ${rank === 1 ? 'bg-yellow-500' : rank === 2 ? 'bg-gray-400' : rank === 3 ? 'bg-amber-700' : 'bg-gray-200'}
                 text-white font-bold
-              `}>
-                {participant.score} pts
+             `}>
+                {participant.score} Pkt
               </Badge>
             </div>
           );
@@ -146,7 +146,7 @@ export default function Leaderboard({ tastingId, displayCount, currentUserId }: 
         
         {displayCount && sortedParticipants.length > displayCount && (
           <div className="text-center pt-2 text-sm text-gray-500">
-            Showing top {displayCount} of {sortedParticipants.length} participants
+            Zeige Top {displayCount} von {sortedParticipants.length} Teilnehmern
           </div>
         )}
       </CardContent>

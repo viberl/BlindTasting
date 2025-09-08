@@ -3,9 +3,27 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { 
   Tasting,
-  Flight,
+  Flight as BaseFlight,
   ScoringRule
 } from "@shared/schema";
+
+interface Flight extends Omit<BaseFlight, 'wines'> {
+  wines?: Array<{
+    id: number;
+    name: string;
+    producer: string;
+    vintage: string;
+    country: string;
+    region: string;
+    varietals: string[];
+    imageUrl: string | null;
+    flightId: number;
+    letterCode: string;
+    vinaturelId: string | null;
+    isCustom: boolean;
+  }>;
+}
+
 import {
   Card,
   CardContent,
@@ -81,7 +99,7 @@ export default function Summary() {
   if (tastingLoading || flightsLoading || scoringLoading) {
     return (
       <div className="flex items-center justify-center h-[50vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-[#4C0519]" />
+        <Loader2 className="h-8 w-8 animate-spin text-[#274E37]" />
       </div>
     );
   }
@@ -109,7 +127,7 @@ export default function Summary() {
           <CardHeader className="border-b bg-gray-50 rounded-t-lg">
             <div className="flex justify-between items-center">
               <div>
-                <CardTitle className="text-2xl font-display text-[#4C0519]">Tasting Summary</CardTitle>
+                <CardTitle className="text-2xl font-display text-[#274E37]">Tasting Summary</CardTitle>
                 <CardDescription>
                   Review and launch your tasting: "{tasting.name}"
                 </CardDescription>
@@ -118,7 +136,7 @@ export default function Summary() {
                 <div className="w-8 h-8 rounded-full bg-gray-300 text-gray-600 flex items-center justify-center">1</div>
                 <div className="w-8 h-8 rounded-full bg-gray-300 text-gray-600 flex items-center justify-center">2</div>
                 <div className="w-8 h-8 rounded-full bg-gray-300 text-gray-600 flex items-center justify-center">3</div>
-                <div className="w-8 h-8 rounded-full bg-[#4C0519] text-white flex items-center justify-center">4</div>
+                <div className="w-8 h-8 rounded-full bg-[#274E37] text-white flex items-center justify-center">4</div>
                 <span className="text-xs text-gray-500 hidden sm:inline">Summary</span>
               </div>
             </div>
@@ -161,8 +179,8 @@ export default function Summary() {
                 <div className="mt-4">
                   <Button 
                     variant="link" 
-                    className="text-[#4C0519] p-0 h-auto flex items-center" 
-                    onClick={() => navigate(`/host/create`)}
+                    className="text-[#274E37] p-0 h-auto flex items-center" 
+                    onClick={() => navigate(`/host/create-tasting`)}
                   >
                     <PencilLine className="h-4 w-4 mr-1" />
                     Edit Details
@@ -234,7 +252,7 @@ export default function Summary() {
                 <div className="mt-4">
                   <Button 
                     variant="link" 
-                    className="text-[#4C0519] p-0 h-auto flex items-center" 
+                    className="text-[#274E37] p-0 h-auto flex items-center" 
                     onClick={() => navigate(`/host/scoring/${tastingId}`)}
                   >
                     <PencilLine className="h-4 w-4 mr-1" />
@@ -255,7 +273,7 @@ export default function Summary() {
                       <AccordionItem key={flight.id} value={flight.id.toString()}>
                         <AccordionTrigger className="hover:bg-gray-50 px-4 rounded-md">
                           <div className="flex items-center">
-                            <div className="h-6 w-6 rounded-full bg-[#4C0519] text-white flex items-center justify-center text-sm mr-3">
+                            <div className="h-6 w-6 rounded-full bg-[#274E37] text-white flex items-center justify-center text-sm mr-3">
                               {flightIndex + 1}
                             </div>
                             <div className="text-left">
@@ -299,7 +317,7 @@ export default function Summary() {
                 <div>
                   <Button 
                     variant="link" 
-                    className="text-[#4C0519] p-0 h-auto flex items-center" 
+                    className="text-[#274E37] p-0 h-auto flex items-center" 
                     onClick={() => navigate(`/host/wines/${tastingId}`)}
                   >
                     <PencilLine className="h-4 w-4 mr-1" />
@@ -322,7 +340,7 @@ export default function Summary() {
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button
-                  className="bg-[#4C0519] hover:bg-[#3A0413]"
+                  className="bg-[#274E37] hover:bg-[#e65b2d]"
                   disabled={!flights.length || !totalWines || activateTastingMutation.isPending}
                 >
                   {activateTastingMutation.isPending ? "Activating..." : "Launch Tasting"}
@@ -351,7 +369,7 @@ export default function Summary() {
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction
                     onClick={() => activateTastingMutation.mutate()}
-                    className="bg-[#4C0519] hover:bg-[#3A0413]"
+                    className="bg-[#274E37] hover:bg-[#e65b2d]"
                   >
                     Launch Tasting
                   </AlertDialogAction>

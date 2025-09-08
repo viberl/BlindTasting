@@ -100,7 +100,7 @@ export default function VinaturelWineSelector({ onSelectWine, selectedWines = []
 
       {isLoading ? (
         <div className="flex justify-center p-8">
-          <Loader2 className="h-8 w-8 animate-spin text-[#4C0519]" />
+          <Loader2 className="h-8 w-8 animate-spin text-[#274E37]" />
         </div>
       ) : error ? (
         <div className="text-center p-8 text-red-500">
@@ -115,7 +115,7 @@ export default function VinaturelWineSelector({ onSelectWine, selectedWines = []
             </div>
           ) : (
             filteredWines.map((wine) => (
-              <Card key={wine.id} className={`overflow-hidden hover:shadow-md transition-shadow ${isWineSelected(wine.id) ? 'border-[#4C0519] bg-rose-50' : ''}`}>
+              <Card key={wine.id} className={`overflow-hidden hover:shadow-md transition-shadow ${isWineSelected(wine.id) ? 'border-[#274E37] bg-rose-50' : ''}`}>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg line-clamp-2">{wine.name}</CardTitle>
                 </CardHeader>
@@ -135,7 +135,7 @@ export default function VinaturelWineSelector({ onSelectWine, selectedWines = []
                     <p className="text-sm text-muted-foreground">{wine.producer}</p>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {wine.varietals.map((varietal, index) => (
-                        <Badge key={index} className="bg-[#4C0519]/10 text-[#4C0519] hover:bg-[#4C0519]/20 text-xs">
+                        <Badge key={index} className="bg-[#274E37]/10 text-[#274E37] hover:bg-[#274E37]/20 text-xs">
                           {varietal}
                         </Badge>
                       ))}
@@ -145,7 +145,7 @@ export default function VinaturelWineSelector({ onSelectWine, selectedWines = []
                 <CardFooter>
                   <Button
                     variant={isWineSelected(wine.id) ? "outline" : "default"}
-                    className={`w-full ${isWineSelected(wine.id) ? 'border-[#4C0519] text-[#4C0519]' : 'bg-[#4C0519] hover:bg-[#3A0413]'}`}
+                    className={`w-full ${isWineSelected(wine.id) ? 'border-[#274E37] text-[#274E37]' : 'bg-[#274E37] hover:bg-[#e65b2d]'}`}
                     onClick={() => handleSelectWine(wine)}
                     disabled={isWineSelected(wine.id)}
                   >

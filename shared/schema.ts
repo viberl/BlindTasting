@@ -41,6 +41,8 @@ export const insertTastingSchema = createInsertSchema(tastings).pick({
   hostId: true,
   isPublic: true,
   password: true,
+}).extend({
+  invitedEmails: z.array(z.string().email()).optional()
 });
 
 export type InsertTasting = z.infer<typeof insertTastingSchema>;
@@ -50,8 +52,9 @@ export type Tasting = typeof tastings.$inferSelect;
 export const tastingInvitees = pgTable("tasting_invitees", {
   tastingId: integer("tasting_id").notNull().references(() => tastings.id),
   email: text("email").notNull(),
-}, (t) => ({
-  pk: primaryKey(t.tastingId, t.email),
+  role: text("role").notNull().default('guest'),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.tastingId, table.email] })
 }));
 
 export const insertTastingInviteeSchema = createInsertSchema(tastingInvitees);
@@ -120,6 +123,7 @@ export const wines = pgTable("wines", {
   vintage: text("vintage").notNull(),
   varietals: text("varietals").array().notNull(),
   vinaturelId: text("vinaturel_id"),
+  imageUrl: text("image_url"),
   isCustom: boolean("is_custom").default(false).notNull(),
 });
 
@@ -133,6 +137,7 @@ export const insertWineSchema = createInsertSchema(wines).pick({
   vintage: true,
   varietals: true,
   vinaturelId: true,
+  imageUrl: true,
   isCustom: true,
 });
 
@@ -144,6 +149,7 @@ export const participants = pgTable("participants", {
   id: serial("id").primaryKey(),
   tastingId: integer("tasting_id").notNull().references(() => tastings.id),
   userId: integer("user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
   joinedAt: timestamp("joined_at").defaultNow().notNull(),
   score: integer("score").default(0).notNull(),
 });
@@ -151,6 +157,9 @@ export const participants = pgTable("participants", {
 export const insertParticipantSchema = createInsertSchema(participants).pick({
   tastingId: true,
   userId: true,
+  name: true,
+}).extend({
+  name: z.string().optional()
 });
 
 export type InsertParticipant = z.infer<typeof insertParticipantSchema>;

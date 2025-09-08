@@ -78,33 +78,17 @@ export default function CreateFlightDialog({ tastingId, open, onOpenChange }: Cr
         <DialogHeader>
           <DialogTitle>Neuen Flight erstellen</DialogTitle>
           <DialogDescription>
-            Erstellen Sie einen neuen Flight für diese Verkostung. Ein Flight ist eine Runde von Weinen, die gleichzeitig verkostet werden.
+            Geben Sie einen Namen und ggf. Zeitlimit für den Flight an.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <p className="text-center mb-4">
-              Ein Flight ist eine Runde von Weinen, die gleichzeitig verkostet werden. 
-              Sie können nach dem Erstellen des Flights Weine hinzufügen.
-            </p>
-
-            <DialogFooter className="gap-2 sm:gap-0">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => onOpenChange(false)}
-              >
-                Abbrechen
-              </Button>
-              <Button
-                type="submit"
-                className="bg-[#4C0519] hover:bg-[#3A0413]"
-                disabled={createFlightMutation.isPending}
-              >
+            {/* Hier können weitere Felder ergänzt werden, z.B. Name, Zeitlimit */}
+            <DialogFooter>
+              <Button type="submit" className="bg-[#274E37] hover:bg-[#3A0413] w-full" disabled={createFlightMutation.isPending}>
                 {createFlightMutation.isPending ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Wird erstellt...
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Wird erstellt...
                   </>
                 ) : (
                   "Flight erstellen"

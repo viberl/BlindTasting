@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1746462756566,
+      "tag": "0000_long_kinsey_walden",
+      "breakpoints": true
+    }
+  ]
+}

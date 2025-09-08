@@ -40,6 +40,7 @@ const wineFormSchema = z.object({
   varietals: z.array(z.string()).min(1, "At least one varietal is required"),
   vinaturelId: z.string().optional(),
   isCustom: z.boolean().default(true),
+  imageUrl: z.string().optional(),
 });
 
 type WineFormData = z.infer<typeof wineFormSchema>;
@@ -84,6 +85,9 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
     },
   });
 
+  // Logge Tab und Suchfeld vor useQuery
+  console.log("Tab:", activeTab, "Suchfeld:", searchQuery);
+
   // Vinaturel API Weinsuche
   const { data: searchResults, isLoading: searchLoading } = useQuery({
     queryKey: ["/api/wines/search", searchQuery],
@@ -93,6 +97,9 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
     },
     enabled: searchQuery.length >= 3,
   });
+
+  // Fallback-Log direkt nach useQuery
+  console.log("Vinaturel useQuery Ergebnis:", searchResults, "Loading:", searchLoading, "Query:", searchQuery);
 
   useEffect(() => {
     const country = form.watch("country");
@@ -126,11 +133,15 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
     form.setValue("varietals", wine.varietals);
     form.setValue("vinaturelId", wine.id);
     form.setValue("isCustom", false);
+    // Set imageUrl if available in the wine object
+    if (wine.imageUrl) {
+      form.setValue("imageUrl", wine.imageUrl);
+    }
     setSelectedVarietals(wine.varietals);
     setActiveTab("custom"); // Switch to custom tab to display the selected wine
   };
 
-  const handleFormSubmit = (data: WineFormData) => {
+  const handleFormSubmit = (data: WineFormData & { imageUrl?: string }) => {
     onSubmit({
       flightId,
       country: data.country,
@@ -141,6 +152,7 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
       varietals: data.varietals,
       vinaturelId: data.vinaturelId,
       isCustom: data.isCustom,
+      imageUrl: data.imageUrl || null,
     });
     
     // Reset form
@@ -159,6 +171,10 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
 
   return (
     <div className="border rounded-lg p-4 bg-white">
+      {/* UI-Debug-Element für aktives Tab und Query */}
+      <div style={{fontSize: "12px", color: "#b91c1c", marginBottom: 8}}>
+        Debug: Tab={activeTab} | Query={searchQuery}
+      </div>
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-2 mb-4">
           <TabsTrigger value="custom" className="flex items-center">
@@ -229,7 +245,7 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
                   <FormItem>
                     <FormLabel>Producer/Winery</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g. Château Margaux" {...field} />
+                      <Input placeholder="e.g. Terroir al Limit" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -319,7 +335,7 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
 
               <Button 
                 type="submit" 
-                className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
+                className="w-full bg-[#274E37] hover:bg-[#e65b2d]"
                 disabled={isSubmitting}
               >
                 {isSubmitting ? "Adding Wine..." : "Add Wine to Flight"}
@@ -336,7 +352,10 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
                 placeholder="Search wines from Vinaturel..." 
                 className="pl-10"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  console.log("Input-Change:", e.target.value);
+                  setSearchQuery(e.target.value);
+                }}
               />
             </div>
             
@@ -347,11 +366,15 @@ export default function WineForm({ flightId, onSubmit, isSubmitting }: WineFormP
                 <p className="text-center py-10 text-gray-500">Enter at least 3 characters to search</p>
               )}
               
-              {!searchLoading && searchQuery.length >= 3 && (!searchResults || searchResults.length === 0) && (
+              {/* Debug-Log kann bei Bedarf außerhalb des JSX erfolgen */}
+              
+              {/* Zeige "Keine Weine gefunden" nur, wenn wirklich ein leeres Array vorliegt */}
+              {!searchLoading && searchQuery.length >= 3 && Array.isArray(searchResults) && searchResults.length === 0 && (
                 <p className="text-center py-10 text-gray-500">Keine Weine gefunden für "{searchQuery}"</p>
               )}
               
-              {!searchLoading && searchQuery.length >= 3 && searchResults && searchResults.length > 0 && (
+              {/* Zeige Treffer nur, wenn ein Array mit mindestens einem Element vorliegt */}
+              {!searchLoading && searchQuery.length >= 3 && Array.isArray(searchResults) && searchResults.length > 0 && (
                 <div className="space-y-2">
                   {searchResults.map((wine: any) => (
                     <div 

@@ -52,6 +52,8 @@ export default function CreateTastingPage() {
   const queryClient = useQueryClient();
   const [_, navigate] = useLocation();
   const [tastingType, setTastingType] = useState<"public" | "password" | "private">("public");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [invitees, setInvitees] = useState<string[]>([]);
 
   const form = useForm<CreateTastingFormData>({
     resolver: zodResolver(createTastingSchema),
@@ -68,7 +70,7 @@ export default function CreateTastingPage() {
         throw new Error("Sie müssen angemeldet sein, um eine Verkostung zu erstellen");
       }
       
-      const requestData = {
+      const requestData: any = {
         ...data,
         hostId: user.id,
       };
@@ -80,6 +82,11 @@ export default function CreateTastingPage() {
       
       // Öffentlichkeitsstatus festlegen
       requestData.isPublic = tastingType === "public";
+
+      // Einladungen bei privater Verkostung anhängen
+      if (tastingType === "private" && invitees.length > 0) {
+        requestData.invitees = invitees;
+      }
       
       console.log('Erstellen einer Verkostung mit:', { 
         ...requestData, 
@@ -144,7 +151,7 @@ export default function CreateTastingPage() {
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
-            <Wine className="h-6 w-6 text-[#4C0519]" />
+            <Wine className="h-6 w-6 text-[#274E37]" />
             <CardTitle>Neue Verkostung erstellen</CardTitle>
           </div>
           <CardDescription>
@@ -183,10 +190,10 @@ export default function CreateTastingPage() {
                   <SelectContent>
                     <SelectItem value="public">Öffentlich</SelectItem>
                     <SelectItem value="password">Passwortgeschützt</SelectItem>
-                    <SelectItem value="private">Nur mit Einladung</SelectItem>
-                  </SelectContent>
-                </Select>
-                <FormDescription>
+              <SelectItem value="private">Nur mit Einladung</SelectItem>
+              </SelectContent>
+            </Select>
+            <FormDescription>
                   {tastingType === "public" && "Jeder kann an dieser Verkostung teilnehmen"}
                   {tastingType === "password" && "Teilnehmer benötigen ein Passwort zum Beitreten"}
                   {tastingType === "private" && "Nur eingeladene Teilnehmer können beitreten"}
@@ -213,9 +220,70 @@ export default function CreateTastingPage() {
                 />
               )}
 
+              {tastingType === "private" && (
+                <div className="space-y-3">
+                  <FormLabel>Einladungen (E-Mail-Adressen)</FormLabel>
+                  <div className="flex gap-2">
+                    <Input 
+                      placeholder="name@example.com"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const email = inviteEmail.trim().toLowerCase();
+                          if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !invitees.includes(email)) {
+                            setInvitees(prev => [...prev, email]);
+                            setInviteEmail("");
+                          }
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        const email = inviteEmail.trim().toLowerCase();
+                        if (!email) return;
+                        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                          toast({ title: 'Ungültige E-Mail', description: 'Bitte geben Sie eine gültige E-Mail ein.', variant: 'destructive' });
+                          return;
+                        }
+                        if (!invitees.includes(email)) {
+                          setInvitees(prev => [...prev, email]);
+                          setInviteEmail("");
+                        }
+                      }}
+                    >
+                      Hinzufügen
+                    </Button>
+                  </div>
+                  {invitees.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {invitees.map((email) => (
+                        <span key={email} className="inline-flex items-center gap-2 bg-gray-100 text-gray-800 rounded-full px-3 py-1 text-sm">
+                          {email}
+                          <button
+                            type="button"
+                            className="text-gray-500 hover:text-gray-700"
+                            onClick={() => setInvitees(prev => prev.filter(e => e !== email))}
+                            aria-label={`Entferne ${email}`}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <FormDescription>
+                    Eingeladene Nutzer sehen die Verkostung in der Startseite unter „Eingeladen“.
+                  </FormDescription>
+                </div>
+              )}
+
               <Button 
                 type="submit" 
-                className="w-full bg-[#4C0519] hover:bg-[#3A0413]"
+                className="w-full bg-[#274E37] hover:bg-[#e65b2d]"
                 disabled={createTastingMutation.isPending}
               >
                 {createTastingMutation.isPending ? "Wird erstellt..." : "Verkostung erstellen"}

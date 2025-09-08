@@ -3,6 +3,8 @@ import { Toaster } from "@/components/ui/toaster";
 import NotFound from "@/pages/not-found";
 import HomePage from "@/pages/home-page";
 import AuthPage from "@/pages/auth-page";
+import JoinPage from "@/pages/taster/join";
+import WaitingPage from "@/pages/taster/waiting";
 import CreateTastingPage from "@/pages/host/create-tasting";
 import { ProtectedRoute } from "./lib/protected-route";
 import Navbar from "@/components/layout/navbar";
@@ -14,6 +16,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 const queryClient = new QueryClient();
 
 import TastingDetailPage from "@/pages/host/tasting-detail";
+import SubmitGuesses from "@/pages/taster/submit-guesses";
+import ProfilePage from "@/pages/profile";
 
 function Router() {
   return (
@@ -21,6 +25,10 @@ function Router() {
       <ProtectedRoute path="/" component={HomePage} />
       <ProtectedRoute path="/host/create-tasting" component={CreateTastingPage} />
       <ProtectedRoute path="/host/tasting/:id" component={TastingDetailPage} />
+      <ProtectedRoute path="/tasting/:id/submit" component={SubmitGuesses} />
+      <ProtectedRoute path="/profile" component={ProfilePage} />
+      <ProtectedRoute path="/taster/join/:id" component={JoinPage} />
+      <ProtectedRoute path="/taster/waiting/:id" component={WaitingPage} />
       <Route path="/auth" component={AuthPage} />
       <Route component={NotFound} />
     </Switch>

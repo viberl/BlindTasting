@@ -120,7 +120,7 @@ export default function ScoringSetup() {
   if (tastingLoading) {
     return (
       <div className="flex items-center justify-center h-[50vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-[#4C0519]" />
+        <Loader2 className="h-8 w-8 animate-spin text-[#274E37]" />
       </div>
     );
   }
@@ -146,12 +146,12 @@ export default function ScoringSetup() {
           <CardHeader className="border-b bg-gray-50 rounded-t-lg">
             <div className="flex justify-between items-center">
               <div>
-                <CardTitle className="text-2xl font-display text-[#4C0519]">Setup Scoring System</CardTitle>
+                <CardTitle className="text-2xl font-display text-[#274E37]">Setup Scoring System</CardTitle>
                 <CardDescription>Define how points will be awarded for correct guesses</CardDescription>
               </div>
               <div className="flex items-center space-x-2">
                 <div className="w-8 h-8 rounded-full bg-gray-300 text-gray-600 flex items-center justify-center">1</div>
-                <div className="w-8 h-8 rounded-full bg-[#4C0519] text-white flex items-center justify-center">2</div>
+                <div className="w-8 h-8 rounded-full bg-[#274E37] text-white flex items-center justify-center">2</div>
                 <span className="text-xs text-gray-500 hidden sm:inline">Scoring</span>
               </div>
             </div>
@@ -348,13 +348,13 @@ export default function ScoringSetup() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => navigate(`/host/create`)}
+                  onClick={() => navigate(`/host/create-tasting`)}
                 >
                   Back
                 </Button>
                 <Button
                   type="submit"
-                  className="bg-[#4C0519] hover:bg-[#3A0413]"
+                  className="bg-[#274E37] hover:bg-[#e65b2d]"
                   disabled={createScoringMutation.isPending}
                 >
                   {createScoringMutation.isPending ? "Saving..." : "Next: Add Wines"}

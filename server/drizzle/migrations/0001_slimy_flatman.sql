@@ -1,0 +1,1 @@
+ALTER TABLE "wines" ADD COLUMN "image_url" text;

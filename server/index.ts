@@ -1,10 +1,37 @@
+console.log('Arbeitsverzeichnis:', process.cwd());
+console.log('DATABASE_URL:', process.env.DATABASE_URL);
+
+import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
+import cookieParser from 'cookie-parser';
+import cors from "./cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { setupAuth } from "./auth";
+import { scheduleDailyVinaturelCsvImport } from "./jobs/vinaturel-csv-scheduler";
 
 const app = express();
-app.use(express.json({ limit: '10mb' })); // Erhöhtes Limit für große Profilbilder
-app.use(express.urlencoded({ extended: false, limit: '10mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cookieParser());
+
+// CORS middleware
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
+// Session-Konfiguration erfolgt zentral in setupAuth(app)
+
+// Session- und Authentifizierungs-Middleware aktivieren
+setupAuth(app);
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -39,6 +66,7 @@ app.use((req, res, next) => {
 (async () => {
   const server = await registerRoutes(app);
 
+  // Error handling middleware
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
@@ -47,24 +75,33 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
+  // Vite setup for development
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
     serveStatic(app);
   }
 
-  // ALWAYS serve the app on port 5000
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = 5000;
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
-    log(`serving on port ${port}`);
+  // Serve the app on the specified PORT environment variable or default to 4000
+  // This serves both the API and the client.
+  const port = parseInt(process.env.PORT as string, 10) || 4000;
+  // Remove reusePort for compatibility on macOS and other platforms
+  // Listen on all interfaces (IPv4 & IPv6) to serve both API and client
+  // Listen on all IPv4 interfaces to ensure localhost (127.0.0.1) is reachable
+  server.listen(port, '0.0.0.0', () => {
+    // Log the address and port for verification
+    const addr = server.address();
+    if (addr && typeof addr === 'object') {
+      log(`serving on http://${addr.address}:${addr.port}`);
+    } else {
+      log(`serving on port ${port}`);
+    }
   });
+
+  // Schedule daily CSV import at 09:30 local time
+  try {
+    scheduleDailyVinaturelCsvImport(9, 30);
+  } catch (e) {
+    console.warn('Failed to schedule daily VINATUREL CSV import:', e);
+  }
 })();
