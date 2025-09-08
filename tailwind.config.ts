@@ -2,8 +2,11 @@ import type { Config } from "tailwindcss";
 
 export default {
   darkMode: ["class"],
-  content: ["./client/index.html", "./client/src/**/*.{js,jsx,ts,tsx}"],
-  theme: {
+  content: [
+    "./client/index.html",
+    "./client/src/**/*.{js,jsx,ts,tsx,html}",
+  ],  
+    theme: {
     extend: {
       borderRadius: {
         lg: "var(--radius)",
@@ -11,55 +14,64 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       colors: {
-        background: "hsl(var(--background))",
-        foreground: "hsl(var(--foreground))",
+        background: "#FFFFFF",
+        foreground: "#222222",
         card: {
-          DEFAULT: "hsl(var(--card))",
-          foreground: "hsl(var(--card-foreground))",
+          DEFAULT: "#FFFFFF",
+          foreground: "#222222",
         },
         popover: {
-          DEFAULT: "hsl(var(--popover))",
-          foreground: "hsl(var(--popover-foreground))",
+          DEFAULT: "#FFFFFF",
+          foreground: "#222222",
         },
         primary: {
-          DEFAULT: "hsl(var(--primary))",
-          foreground: "hsl(var(--primary-foreground))",
+          DEFAULT: "#274E37",
+          foreground: "#FFFFFF",
+          dark: "#1E3E2B",
         },
         secondary: {
-          DEFAULT: "hsl(var(--secondary))",
-          foreground: "hsl(var(--secondary-foreground))",
+          DEFAULT: "#F7F7F7",
+          foreground: "#1E3E2B",
         },
         muted: {
-          DEFAULT: "hsl(var(--muted))",
-          foreground: "hsl(var(--muted-foreground))",
+          DEFAULT: "#F7F7F7",
+          foreground: "#666666",
         },
         accent: {
-          DEFAULT: "hsl(var(--accent))",
-          foreground: "hsl(var(--accent-foreground))",
+          DEFAULT: "#3A7D44",  // Replaced wine red with Vinaturel green
+          foreground: "#FFFFFF",
         },
         destructive: {
-          DEFAULT: "hsl(var(--destructive))",
-          foreground: "hsl(var(--destructive-foreground))",
+          DEFAULT: "#EF4444",
+          foreground: "#FFFFFF",
         },
-        border: "hsl(var(--border))",
-        input: "hsl(var(--input))",
-        ring: "hsl(var(--ring))",
+        border: "#E5E7EB",
+        input: "#E5E7EB",
+        ring: "#274E37",
         chart: {
-          "1": "hsl(var(--chart-1))",
-          "2": "hsl(var(--chart-2))",
-          "3": "hsl(var(--chart-3))",
-          "4": "hsl(var(--chart-4))",
-          "5": "hsl(var(--chart-5))",
+          "1": "#274E37",
+          "2": "#3A7D44",
+          "3": "#F59E0B",
+          "4": "#8B5CF6",
+          "5": "#EC4899",
         },
         sidebar: {
-          DEFAULT: "hsl(var(--sidebar-background))",
-          foreground: "hsl(var(--sidebar-foreground))",
-          primary: "hsl(var(--sidebar-primary))",
-          "primary-foreground": "hsl(var(--sidebar-primary-foreground))",
-          accent: "hsl(var(--sidebar-accent))",
-          "accent-foreground": "hsl(var(--sidebar-accent-foreground))",
-          border: "hsl(var(--sidebar-border))",
-          ring: "hsl(var(--sidebar-ring))",
+          DEFAULT: "#FFFFFF",
+          foreground: "#222222",
+          primary: "#274E37",
+          "primary-foreground": "#FFFFFF",
+          accent: "#F7F7F7",
+          "accent-foreground": "#1E3E2B",
+          border: "#E5E7EB",
+          ring: "#274E37",
+        },
+        vinaturel: {
+          detail: "#1E3E2B",
+          original: "#274E37",
+          highlight: "#e65b2d",
+          gray: "#959998",
+          light: "#F7F7F7",
+          dark: "#1A3323",
         },
       },
       keyframes: {
