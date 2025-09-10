@@ -38,6 +38,10 @@ export default function SetTimerDialog({ open, onOpenChange, flightId }: SetTime
         variant: "destructive",
       });
     },
+    onSettled: () => {
+      // Sicherheitsnetz: Dialog in jedem Fall schließen
+      onOpenChange(false);
+    }
   });
 
   const handleSubmit = (e: React.FormEvent) => {

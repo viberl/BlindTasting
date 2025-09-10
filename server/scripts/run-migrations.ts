@@ -46,6 +46,26 @@ async function runMigrations() {
     const runMigrationNames = new Set(runMigrations.rows.map(m => m.name));
     let appliedMigrations = 0;
 
+    // Baseline: if nothing recorded but core tables already exist, mark existing migrations as applied
+    if (runMigrationNames.size === 0) {
+      const coreTable = await db.execute<{ exists: boolean }>(sql`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name = 'tastings'
+        ) as exists;
+      `);
+      const hasSchema = coreTable.rows?.[0]?.exists === true;
+      if (hasSchema) {
+        console.log('Existing schema detected. Seeding _migrations baseline...');
+        for (const file of migrationFiles) {
+          // Keep the cascade migration to be applied; baseline the rest
+          if (file.includes('enable_cascade_deletes')) continue;
+          await db.execute(sql`INSERT INTO _migrations (name) VALUES (${file});`);
+          runMigrationNames.add(file);
+        }
+      }
+    }
+
     // Run new migrations
     for (const file of migrationFiles) {
       if (!runMigrationNames.has(file)) {

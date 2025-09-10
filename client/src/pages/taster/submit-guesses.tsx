@@ -52,6 +52,7 @@ import {
   Loader2, Wine as WineIcon, Globe, MapPin, 
   Building, Tag, Calendar, Grape, Star, X
 } from "lucide-react";
+import clsx from 'clsx';
 import { useToast } from "@/hooks/use-toast";
 import FlightTimer from "@/components/flight/flight-timer";
 import { countries as COUNTRY_LIST, countryToRegions } from "@/data/country-regions";
@@ -97,6 +98,7 @@ export default function SubmitGuesses() {
   const [selectedWineId, setSelectedWineId] = useState<number | null>(null);
   const [selectedVarietals, setSelectedVarietals] = useState<string[]>([]);
   const [availableRegions, setAvailableRegions] = useState<string[]>([]);
+  const [guessedWineIds, setGuessedWineIds] = useState<Set<number>>(new Set());
 
   // Queries
   const { data: tasting, isLoading: tastingLoading } = useQuery<Tasting>({
@@ -133,6 +135,24 @@ export default function SubmitGuesses() {
   }, [participants, user]);
 
   const [currentParticipantId, setCurrentParticipantId] = useState<number | null>(null);
+  
+  // Load existing guesses for visual indicators
+  useQuery<{ wineId: number; wine?: Wine }[]>({
+    queryKey: currentParticipantId ? [`/api/participants/${currentParticipantId}/guesses`] : ['ignored-guesses'],
+    enabled: !!currentParticipantId,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchInterval: 5000,
+    select: (data) => data as any,
+    onSuccess: (data) => {
+      const ids = new Set<number>();
+      for (const g of data || []) {
+        if (g?.wine?.id) ids.add(g.wine.id);
+        else if (g?.wineId) ids.add(g.wineId);
+      }
+      setGuessedWineIds(ids);
+    }
+  } as any);
   const [attemptedAutoJoin, setAttemptedAutoJoin] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("");
 
@@ -155,6 +175,13 @@ export default function SubmitGuesses() {
           setTimerActive(true);
           setTimerLimit(Number(data.timeLimit) || 0);
           setTimerStartedAt(data.startedAt || new Date().toISOString());
+        } else if (data.type === 'flight_completed') {
+          // Nach Flight-Ende: prüfen, ob alle Flights abgeschlossen sind → Endergebnisse, sonst Zwischen
+          if (data.allCompleted === true) {
+            navigate(`/tasting/${tastingId}/results`);
+          } else {
+            navigate(`/tasting/${tastingId}/intermediate`);
+          }
         }
       } catch {}
     };
@@ -163,6 +190,51 @@ export default function SubmitGuesses() {
       try { ws.close(); } catch {}
     };
   }, [tastingId, currentFlight?.id, user?.id]);
+
+  // Fallback: Wenn Polling anzeigt, dass der Flight abgeschlossen ist, ebenfalls weiterleiten
+  useEffect(() => {
+    if (currentFlight?.completedAt) {
+      (async () => {
+        try {
+          const res = await fetch(`/api/tastings/${tastingId}/flights`, { credentials: 'include' });
+          if (res.ok) {
+            const fls = await res.json();
+            const allCompleted = (fls || []).length > 0 && (fls || []).every((f: any) => !!f.completedAt);
+            if (allCompleted) navigate(`/tasting/${tastingId}/results`);
+            else navigate(`/tasting/${tastingId}/intermediate`);
+          } else {
+            navigate(`/tasting/${tastingId}`);
+          }
+        } catch {
+          navigate(`/tasting/${tastingId}`);
+        }
+      })();
+    }
+  }, [currentFlight?.completedAt, currentFlight?.id, navigate, tastingId]);
+
+  // Robustes Fallback: lokale Deadline überwachen und dann Weiterleitung auslösen
+  useEffect(() => {
+    if (!timerActive || !timerStartedAt || !timerLimit) return;
+    const started = new Date(timerStartedAt).getTime();
+    const deadline = started + Number(timerLimit) * 1000;
+
+    const checkAndRedirect = async () => {
+      try {
+        const res = await fetch(`/api/tastings/${tastingId}/flights`, { credentials: 'include' });
+        if (res.ok) {
+          const fls = await res.json();
+          const remaining = (fls || []).some((f: any) => !f.completedAt);
+          if (remaining) navigate(`/tasting/${tastingId}/intermediate`);
+          else navigate(`/tasting/${tastingId}/results`);
+        }
+      } catch {}
+    };
+
+    const now = Date.now();
+    const delay = Math.max(0, deadline - now + 500); // 0.5s Puffer
+    const t = setTimeout(checkAndRedirect, delay);
+    return () => clearTimeout(t);
+  }, [timerActive, timerStartedAt, timerLimit, tastingId, navigate]);
 
   // Reset timer state when flight changes
   useEffect(() => {
@@ -244,7 +316,8 @@ export default function SubmitGuesses() {
 
   // Submit guess mutation
   const submitGuessMutation = useMutation({
-    mutationFn: async (data: InsertGuess) => {
+    // Server setzt participantId und wineId selbst; Client sendet nur Felder aus dem Formular
+    mutationFn: async (data: Partial<InsertGuess>) => {
       const res = await apiRequest("POST", `/api/wines/${selectedWineId}/guess`, data);
       return res.json();
     },
@@ -253,6 +326,9 @@ export default function SubmitGuesses() {
         title: "Tipp gespeichert",
         description: `Ihr Tipp für Wein ${currentFlight?.wines.find(w => w.id === selectedWineId)?.letterCode} wurde gespeichert.`,
       });
+      if (selectedWineId) {
+        setGuessedWineIds(prev => new Set(prev).add(selectedWineId));
+      }
       
       // Move to the next wine if available
       if (currentFlight?.wines) {
@@ -281,7 +357,7 @@ export default function SubmitGuesses() {
 
   // Handle form submission
   const onSubmit = (formData: GuessFormData) => {
-    if (!currentParticipantId || !selectedWineId) {
+    if (!selectedWineId) {
       toast({
         title: "Fehler",
         description: "Tipp kann nicht gesendet werden. Bitte versuchen Sie es erneut.",
@@ -292,8 +368,6 @@ export default function SubmitGuesses() {
 
     submitGuessMutation.mutate({
       ...formData,
-      participantId: currentParticipantId,
-      wineId: selectedWineId,
       varietals: selectedVarietals,
     });
   };
@@ -402,7 +476,7 @@ export default function SubmitGuesses() {
               <TabsList className="flex-wrap">
                 {currentFlight.wines.map((wine) => (
                   <TabsTrigger key={wine.id} value={wine.letterCode} className="flex items-center space-x-2">
-                    <span className="h-6 w-6 flex items-center justify-center bg-[#274E37] text-white rounded-full text-sm font-medium">
+                    <span className={clsx("h-6 w-6 flex items-center justify-center bg-[#274E37] text-white rounded-full text-sm font-medium", guessedWineIds.has(wine.id) && "border-2 border-orange-500") }>
                       {wine.letterCode}
                     </span>
                     <span>Wein {wine.letterCode}</span>
@@ -413,7 +487,7 @@ export default function SubmitGuesses() {
               {currentFlight.wines.map((wine) => (
                 <TabsContent key={wine.id} value={wine.letterCode} className="space-y-6">
                   <div className="bg-gray-50 rounded-lg p-4 flex items-center">
-                    <span className="h-10 w-10 flex items-center justify-center bg-[#274E37] text-white rounded-full text-lg font-medium mr-3">
+                    <span className={clsx("h-10 w-10 flex items-center justify-center bg-[#274E37] text-white rounded-full text-lg font-medium mr-3", guessedWineIds.has(wine.id) && "border-4 border-orange-500") }>
                       {wine.letterCode}
                     </span>
                     <h3 className="text-lg font-medium text-gray-900">Wein {wine.letterCode}</h3>
@@ -540,7 +614,8 @@ export default function SubmitGuesses() {
                                             field.onChange(onlyDigits);
                                           }}
                                           inputMode="numeric"
-                                          pattern="\\d{4}"
+                                          pattern="[0-9]{4}"
+                                          title="Bitte genau 4 Ziffern eingeben"
                                           maxLength={4}
                                         />
                                       </FormControl>

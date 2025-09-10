@@ -457,7 +457,8 @@ export default function AddWineDialog({ flightId, open, onOpenChange, onWineAdde
                               }}
                               disabled={customForm.watch("noVintage")}
                               inputMode="numeric"
-                              pattern="\\d{4}"
+                              pattern="[0-9]{4}"
+                              title="Bitte genau 4 Ziffern eingeben"
                               maxLength={4}
                             />
                           </FormControl>

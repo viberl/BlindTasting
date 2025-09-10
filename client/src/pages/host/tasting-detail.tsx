@@ -79,6 +79,65 @@ interface Flight {
   wines: Wine[];
 }
 
+// Guess stats response types
+interface FlightGuessStats {
+  flightId: number;
+  tastingId: number;
+  stats: Array<{ wineId: number; letterCode: string; submitted: number; total: number; missing: number }>;
+}
+
+function FlightWineList({ flight }: { flight: Flight }) {
+  const { data: guessStats } = useQuery<FlightGuessStats>({
+    queryKey: ["flight-guess-stats", flight.id],
+    queryFn: async () => {
+      const res = await fetch(`/api/flights/${flight.id}/guess-stats`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Fehler beim Laden der Tipp-Statistiken');
+      return res.json();
+    },
+    refetchInterval: 3000,
+    enabled: !!flight?.id,
+  });
+
+  const statsMap = new Map<number, { submitted: number; total: number; missing: number }>();
+  guessStats?.stats.forEach(s => statsMap.set(s.wineId, { submitted: s.submitted, total: s.total, missing: s.missing }));
+
+  if (!flight.wines || flight.wines.length === 0) {
+    return <p className="text-gray-500 italic">Keine Weine in diesem Flight</p>;
+  }
+
+  return (
+    <div className="grid gap-2">
+      {flight.wines.map((wine: any) => {
+        const s = statsMap.get(wine.id);
+        return (
+          <div key={wine.id} className="flex items-center justify-between p-2 rounded bg-gray-50">
+            <div className="flex items-center">
+              <div className="h-8 w-8 flex items-center justify-center bg-[#274E37] text-white rounded-full mr-3">
+                {wine.letterCode}
+              </div>
+              <div>
+                <p className="font-medium">{wine.producer} {wine.name}</p>
+                <p className="text-sm text-gray-500">{wine.region}, {wine.country}, {wine.vintage}</p>
+                <p className="text-sm text-gray-600 italic">{wine.varietals && wine.varietals.join(', ')}</p>
+              </div>
+            </div>
+            <div className="text-sm text-gray-700 whitespace-nowrap ml-4">
+              {s ? (
+                <span>
+                  Tipps: <span className="font-semibold text-[#274E37]">{s.submitted}</span> / {s.total}
+                  {s.missing > 0 && <span className="ml-2 text-amber-600">({s.missing} fehlen)</span>}
+                </span>
+              ) : (
+                <span className="text-gray-400">Tipps: –</span>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function TastingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const tastingId = parseInt(id);
@@ -92,6 +151,12 @@ export default function TastingDetailPage() {
     user: User;
     isHost: boolean;
   }
+
+  // State für Timer-Countdown (muss VOR Effekten definiert sein, die ihn verwenden)
+  const [timerFlightId, setTimerFlightId] = useState<number | null>(null);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [wsTimerActive, setWsTimerActive] = useState(false);
+  const [autoCompleteTriggered, setAutoCompleteTriggered] = useState(false);
 
   // Teilnehmer laden
   const { data: participants = [], isLoading: isParticipantsLoading, refetch: refetchParticipants } = useQuery<ParticipantWithUser[]>({
@@ -157,6 +222,21 @@ export default function TastingDetailPage() {
             }).catch(error => {
               console.error('Fehler beim Aktualisieren der Teilnehmerliste:', error);
             });
+          } else if (data.type === 'timer_started') {
+            // Host: lokalen Countdown aktivieren
+            if (typeof data.flightId === 'number' && typeof data.timeLimit === 'number') {
+              setTimerFlightId(data.flightId);
+              setTimeLeft(Math.max(0, Math.floor(Number(data.timeLimit))));
+              // Dialog schließen, falls noch offen
+              setSetTimerDialogOpen(false);
+              setWsTimerActive(true);
+            }
+          } else if (data.type === 'flight_completed') {
+            // Timer zurücksetzen und Daten auffrischen
+            setTimerFlightId(null);
+            setTimeLeft(null);
+            setWsTimerActive(false);
+            queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
           }
         } catch (e) {
           console.error('Fehler beim Verarbeiten der WebSocket-Nachricht:', e);
@@ -186,6 +266,35 @@ export default function TastingDetailPage() {
       }
     };
   }, [tastingId, refetchParticipants, toast]);
+
+  // Lokaler Countdown, wenn WS den Timer gestartet hat
+  useEffect(() => {
+    if (!wsTimerActive || !timerFlightId || timeLeft === null) return;
+    const interval = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev === null) return prev;
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [wsTimerActive, timerFlightId, timeLeft]);
+
+  // Falls der Serverabschluss ausbleibt: Flight clientseitig abschließen
+  useEffect(() => {
+    if (!wsTimerActive || !timerFlightId) return;
+    if (timeLeft === 0 && !autoCompleteTriggered) {
+      setAutoCompleteTriggered(true);
+      completeFlightMutation.mutate(timerFlightId);
+    }
+    // reset trigger when a new timer starts
+    if (timeLeft !== 0 && autoCompleteTriggered) {
+      setAutoCompleteTriggered(false);
+    }
+  }, [wsTimerActive, timeLeft, timerFlightId]);
 
   // Teilnehmer entfernen
   const removeParticipantMutation = useMutation({
@@ -224,10 +333,6 @@ export default function TastingDetailPage() {
   const [setTimerDialogOpen, setSetTimerDialogOpen] = useState(false);
   const [createFlightDialogOpen, setCreateFlightDialogOpen] = useState(false);
   const [selectedFlightId, setSelectedFlightId] = useState<number | null>(null);
-  
-  // State für Timer-Countdown
-  const [timerFlightId, setTimerFlightId] = useState<number | null>(null);
-  const [timeLeft, setTimeLeft] = useState<number | null>(null);
   
   // State für Punktesystem und Einstellungen
   const [pointsConfiguration, setPointsConfiguration] = useState({
@@ -309,10 +414,11 @@ export default function TastingDetailPage() {
     console.log('Flights in UI:', flights);
   }, [flights]);
   
-  // Timer-Effekt für aktive Flights
+  // Timer aus Flight-Daten herleiten (Fallback, wenn kein WS-Start bekannt)
   useEffect(() => {
     if (!flights) return;
-    
+    if (timerFlightId && timeLeft !== null) return; // WS hat Vorrang
+
     // Finde einen aktiven Flight mit Timer
     const activeFlightWithTimer = flights.find(
       f => f.startedAt && !f.completedAt && f.timeLimit > 0
@@ -802,24 +908,7 @@ export default function TastingDetailPage() {
                       </div>
                     </CardHeader>
                     <CardContent className="pt-6">
-                      {flight.wines && flight.wines.length > 0 ? (
-                        <div className="grid gap-2">
-                          {flight.wines.map((wine: any) => (
-                            <div key={wine.id} className="flex items-center p-2 rounded bg-gray-50">
-                              <div className="h-8 w-8 flex items-center justify-center bg-[#274E37] text-white rounded-full mr-3">
-                                {wine.letterCode}
-                              </div>
-                              <div>
-                                <p className="font-medium">{wine.producer} {wine.name}</p>
-                                <p className="text-sm text-gray-500">{wine.region}, {wine.country}, {wine.vintage}</p>
-                                <p className="text-sm text-gray-600 italic">{wine.varietals && wine.varietals.join(', ')}</p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-gray-500 italic">Keine Weine in diesem Flight</p>
-                      )}
+                      <FlightWineList flight={flight} />
 
                       {isHost && (
                         <div className="flex gap-2 mt-4">
