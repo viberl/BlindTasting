@@ -1,11 +1,13 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useLocation } from 'wouter';
+import { useAuth } from '@/hooks/use-auth';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Share2, Users, Wine, ClipboardList, Calendar } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import FlightStatus from '@/components/tasting/flight-status';
 import Leaderboard from "@/components/tasting/leaderboard";
@@ -60,7 +62,7 @@ interface Tasting {
 export default function HostDashboard() {
   const { id } = useParams<{ id: string }>();
   const tastingId = parseInt(id || '0');
-  const navigate = useNavigate();
+  const [, navigate] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   
@@ -69,13 +71,12 @@ export default function HostDashboard() {
   const [selectedFlight, setSelectedFlight] = useState<Flight | null>(null);
   // Scoring rules werden per Query geladen
   
-  // Mock user for now
-  const user = { id: 1, name: 'Host User' };
+  const { user } = useAuth();
   
   const { data: tasting, isLoading: tastingLoading } = useQuery({
     queryKey: ['tasting', tastingId],
     queryFn: async (): Promise<Tasting> => {
-      const response = await fetch(`/api/tastings/${tastingId}`);
+      const response = await fetch(`/api/tastings/${tastingId}`, { credentials: 'include' });
       if (!response.ok) throw new Error('Fehler beim Laden der Verkostung');
       const data = await response.json();
       return {
@@ -90,7 +91,7 @@ export default function HostDashboard() {
   const { data: flights = [], isLoading: flightsLoading } = useQuery<Flight[]>({
     queryKey: ['flights', tastingId],
     queryFn: async (): Promise<Flight[]> => {
-      const response = await fetch(`/api/tastings/${tastingId}/flights`);
+      const response = await fetch(`/api/tastings/${tastingId}/flights`, { credentials: 'include' });
       if (!response.ok) throw new Error('Fehler beim Laden der Flights');
       const data = await response.json();
       return data.map((flight: any) => ({
@@ -115,11 +116,68 @@ export default function HostDashboard() {
   const { data: scoringRules } = useQuery<{ displayCount: number}>({
     queryKey: ['scoringRules', tastingId],
     queryFn: async () => {
-      const response = await fetch(`/api/tastings/${tastingId}/scoring`);
+      const response = await fetch(`/api/tastings/${tastingId}/scoring`, { credentials: 'include' });
       if (!response.ok) throw new Error('Fehler beim Laden der Bewertungsregeln');
       return response.json();
     },
     enabled: !!tastingId,
+  });
+
+  // Derived flags
+  const allFlightsCompleted = useMemo(() => (flights && flights.length > 0 && flights.every(f => !!f.completedAt)), [flights]);
+
+  // Per-flight stats (only when selected flight is completed)
+  const { data: flightStats } = useQuery<any>({
+    queryKey: selectedFlight?.id ? ["/api/flights", selectedFlight.id, "stats"] : ["flight-stats", "none"],
+    queryFn: async () => {
+      const res = await fetch(`/api/flights/${selectedFlight!.id}/stats`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Fehler beim Laden der Flight-Statistiken');
+      return res.json();
+    },
+    enabled: !!selectedFlight?.id && !!selectedFlight?.completedAt,
+  });
+
+  // Final stats when all flights are completed
+  const { data: finalStats } = useQuery<any>({
+    queryKey: allFlightsCompleted ? ["/api/tastings", tastingId, "final-stats"] : ["final-stats", "none"],
+    queryFn: async () => {
+      const res = await fetch(`/api/tastings/${tastingId}/final-stats`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Fehler beim Laden der Endergebnis-Statistiken');
+      return res.json();
+    },
+    enabled: !!tastingId && allFlightsCompleted,
+  });
+
+  // Participant detail modal state
+  const [participantDialog, setParticipantDialog] = useState<{ open: boolean; participant: any | null }>({ open: false, participant: null });
+  type Guess = { id: number; wineId: number; score: number; rating?: number | null; country?: string | null; region?: string | null; producer?: string | null; name?: string | null; vintage?: string | null; varietals?: string[] | null };
+  const { data: participantGuesses } = useQuery<Guess[]>({
+    queryKey: participantDialog.participant ? ["/api/participants", participantDialog.participant.id, "guesses"] : ["participant-guesses", "none"],
+    queryFn: async () => {
+      const res = await fetch(`/api/participants/${participantDialog.participant!.id}/guesses`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Fehler beim Laden der Tipps');
+      return res.json();
+    },
+    enabled: !!participantDialog.participant?.id && participantDialog.open,
+  });
+
+  // Latest completed flight stats for intermediate results (if not all completed)
+  const lastCompletedFlight = useMemo(() => {
+    const completed = (flights || []).filter(f => !!f.completedAt);
+    if (completed.length === 0) return null;
+    // latest by completedAt
+    completed.sort((a, b) => new Date(b.completedAt as any).getTime() - new Date(a.completedAt as any).getTime());
+    return completed[0];
+  }, [flights]);
+  const { data: lastCompletedStats } = useQuery<any>({
+    queryKey: lastCompletedFlight?.id ? ["/api/flights", lastCompletedFlight.id, "stats", "latest"] : ["latest-flight-stats", "none"],
+    queryFn: async () => {
+      const res = await fetch(`/api/flights/${lastCompletedFlight!.id}/stats`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Fehler beim Laden der Zwischenergebnisse');
+      return res.json();
+    },
+    enabled: !!lastCompletedFlight?.id && !allFlightsCompleted,
+    refetchOnWindowFocus: true,
   });
 
   // Handle flight completion
@@ -180,7 +238,7 @@ export default function HostDashboard() {
   }
 
   // Check if user is the host
-  if (tasting.hostId !== user?.id) {
+  if (!user || tasting.hostId !== user?.id) {
     return (
       <div className="container mx-auto py-8 px-4">
         <div className="text-center">
@@ -195,7 +253,8 @@ export default function HostDashboard() {
   }
 
   const statusBadge = () => {
-    switch (tasting.status) {
+    const computedStatus = allFlightsCompleted ? 'completed' : tasting.status;
+    switch (computedStatus) {
       case "draft":
         return <Badge variant="outline">Entwurf</Badge>;
       case "active":
@@ -304,7 +363,7 @@ export default function HostDashboard() {
                   <div>
                     <h3 className="text-sm font-medium text-gray-600">Status</h3>
                     <p className="text-2xl font-bold text-gray-900">
-                      {tasting.status.charAt(0).toUpperCase() + tasting.status.slice(1)}
+                      {allFlightsCompleted ? 'Abgeschlossen' : (tasting.status.charAt(0).toUpperCase() + tasting.status.slice(1))}
                     </p>
                   </div>
                 </div>
@@ -396,6 +455,35 @@ export default function HostDashboard() {
                             </CardContent>
                           </Card>
                         </div>
+                        {selectedFlight.completedAt && flightStats && (
+                          <Card className="border border-gray-100 shadow-sm">
+                            <CardHeader>
+                              <CardTitle>Zwischenergebnis-Statistiken (Flight)</CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-3 text-sm">
+                              <div>
+                                <span className="font-medium">Bester Verkoster dieses Flights: </span>
+                                {flightStats.topScorer ? `${flightStats.topScorer.userName} (${flightStats.topScorer.score} Pkt)` : '—'}
+                              </div>
+                              <div>
+                                <span className="font-medium">Am besten erkannt: </span>
+                                {flightStats.bestRecognizedWine ? `(${flightStats.bestRecognizedWine.letterCode}) ${flightStats.bestRecognizedWine.producer} ${flightStats.bestRecognizedWine.name} – ∅ ${flightStats.bestRecognizedWine.avgScore.toFixed(2)} Pkt` : '—'}
+                              </div>
+                              <div>
+                                <span className="font-medium">Am schlechtesten erkannt: </span>
+                                {flightStats.worstRecognizedWine ? `(${flightStats.worstRecognizedWine.letterCode}) ${flightStats.worstRecognizedWine.producer} ${flightStats.worstRecognizedWine.name} – ∅ ${flightStats.worstRecognizedWine.avgScore.toFixed(2)} Pkt` : '—'}
+                              </div>
+                              <div>
+                                <span className="font-medium">Bestbewerteter Wein: </span>
+                                {flightStats.bestRatedWine && flightStats.bestRatedWine.count > 0 ? `(${flightStats.bestRatedWine.letterCode}) ${flightStats.bestRatedWine.producer} ${flightStats.bestRatedWine.name} – ∅ ${Number(flightStats.bestRatedWine.avgRating).toFixed(2)} (${flightStats.bestRatedWine.count})` : '—'}
+                              </div>
+                              <div>
+                                <span className="font-medium">Schlechtester Wein (Bewertung): </span>
+                                {flightStats.worstRatedWine && flightStats.worstRatedWine.count > 0 ? `(${flightStats.worstRatedWine.letterCode}) ${flightStats.worstRatedWine.producer} ${flightStats.worstRatedWine.name} – ∅ ${Number(flightStats.worstRatedWine.avgRating).toFixed(2)} (${flightStats.worstRatedWine.count})` : '—'}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )}
                       </div>
                     )}
                   </TabsContent>
@@ -403,8 +491,9 @@ export default function HostDashboard() {
                   <TabsContent value="leaderboard" className="space-y-4">
                     <Leaderboard 
                       tastingId={tastingId} 
-                      displayCount={scoringRules?.displayCount || null}
+                      displayCount={null}
                       currentUserId={user.id}
+                      onSelectParticipant={(p) => setParticipantDialog({ open: true, participant: p })}
                     />
                   </TabsContent>
 
@@ -431,8 +520,9 @@ export default function HostDashboard() {
               <CardContent className="p-4">
                 <Leaderboard 
                   tastingId={tastingId} 
-                  displayCount={scoringRules?.displayCount || 5}
+                  displayCount={null}
                   currentUserId={user.id}
+                  onSelectParticipant={(p) => setParticipantDialog({ open: true, participant: p })}
                 />
               </CardContent>
             </Card>
@@ -477,9 +567,106 @@ export default function HostDashboard() {
                 </CardContent>
               </Card>
             )}
+            {allFlightsCompleted && finalStats && (
+              <Card className="border border-gray-100 shadow-sm">
+                <CardHeader className="bg-gray-50 p-4 border-b border-gray-100">
+                  <h2 className="font-medium text-gray-900">Endergebnis-Statistiken</h2>
+                </CardHeader>
+                <CardContent className="p-4 space-y-2 text-sm">
+                  <div>
+                    <span className="font-medium">Am besten erkannt (gesamt): </span>
+                    {finalStats.bestRecognizedWine ? `(${finalStats.bestRecognizedWine.letterCode}) ${finalStats.bestRecognizedWine.producer} ${finalStats.bestRecognizedWine.name} – ∅ ${finalStats.bestRecognizedWine.avgScore.toFixed(2)} Pkt` : '—'}
+                  </div>
+                  <div>
+                    <span className="font-medium">Am schlechtesten erkannt (gesamt): </span>
+                    {finalStats.worstRecognizedWine ? `(${finalStats.worstRecognizedWine.letterCode}) ${finalStats.worstRecognizedWine.producer} ${finalStats.worstRecognizedWine.name} – ∅ ${finalStats.worstRecognizedWine.avgScore.toFixed(2)} Pkt` : '—'}
+                  </div>
+                  <div>
+                    <span className="font-medium">Bestbewerteter Wein: </span>
+                    {finalStats.bestRatedWine && finalStats.bestRatedWine.count > 0 ? `(${finalStats.bestRatedWine.letterCode}) ${finalStats.bestRatedWine.producer} ${finalStats.bestRatedWine.name} – ∅ ${Number(finalStats.bestRatedWine.avgRating).toFixed(2)} (${finalStats.bestRatedWine.count})` : '—'}
+                  </div>
+                  <div>
+                    <span className="font-medium">Schlechtester Wein (Bewertung): </span>
+                    {finalStats.worstRatedWine && finalStats.worstRatedWine.count > 0 ? `(${finalStats.worstRatedWine.letterCode}) ${finalStats.worstRatedWine.producer} ${finalStats.worstRatedWine.name} – ∅ ${Number(finalStats.worstRatedWine.avgRating).toFixed(2)} (${finalStats.worstRatedWine.count})` : '—'}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Zwischenergebnis-Statistik (letzter abgeschlossener Flight) */}
+            {!allFlightsCompleted && lastCompletedFlight && lastCompletedStats && (
+              <Card className="border border-gray-100 shadow-sm">
+                <CardHeader className="bg-gray-50 p-4 border-b border-gray-100">
+                  <h2 className="font-medium text-gray-900">
+                    Zwischenergebnis – {lastCompletedFlight.name}
+                  </h2>
+                </CardHeader>
+                <CardContent className="p-4 space-y-2 text-sm">
+                  <div>
+                    <span className="font-medium">Bester Verkoster dieses Flights: </span>
+                    {lastCompletedStats.topScorer ? `${lastCompletedStats.topScorer.userName} (${lastCompletedStats.topScorer.score} Pkt)` : '—'}
+                  </div>
+                  <div>
+                    <span className="font-medium">Am besten erkannt: </span>
+                    {lastCompletedStats.bestRecognizedWine ? `(${lastCompletedStats.bestRecognizedWine.letterCode}) ${lastCompletedStats.bestRecognizedWine.producer} ${lastCompletedStats.bestRecognizedWine.name} – ∅ ${Number(lastCompletedStats.bestRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+                  </div>
+                  <div>
+                    <span className="font-medium">Am schlechtesten erkannt: </span>
+                    {lastCompletedStats.worstRecognizedWine ? `(${lastCompletedStats.worstRecognizedWine.letterCode}) ${lastCompletedStats.worstRecognizedWine.producer} ${lastCompletedStats.worstRecognizedWine.name} – ∅ ${Number(lastCompletedStats.worstRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+                  </div>
+                  <div>
+                    <span className="font-medium">Bestbewertet: </span>
+                    {lastCompletedStats.bestRatedWine && lastCompletedStats.bestRatedWine.count > 0 ? `(${lastCompletedStats.bestRatedWine.letterCode}) ${lastCompletedStats.bestRatedWine.producer} ${lastCompletedStats.bestRatedWine.name} – ∅ ${Number(lastCompletedStats.bestRatedWine.avgRating).toFixed(2)} (${lastCompletedStats.bestRatedWine.count})` : '—'}
+                  </div>
+                  <div>
+                    <span className="font-medium">Schlecht bewertet: </span>
+                    {lastCompletedStats.worstRatedWine && lastCompletedStats.worstRatedWine.count > 0 ? `(${lastCompletedStats.worstRatedWine.letterCode}) ${lastCompletedStats.worstRatedWine.producer} ${lastCompletedStats.worstRatedWine.name} – ∅ ${Number(lastCompletedStats.worstRatedWine.avgRating).toFixed(2)} (${lastCompletedStats.worstRatedWine.count})` : '—'}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
         </div>
       </div>
+      {/* Participant guesses vs host wines modal */}
+      <Dialog open={participantDialog.open} onOpenChange={(o) => setParticipantDialog(s => ({ ...s, open: o }))}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Tipps von {participantDialog.participant?.user?.name || participantDialog.participant?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 max-h-[70vh] overflow-auto pr-1">
+            {flights.flatMap((f, idx) => (f.wines || []).map((w) => ({ ...w, flightIndex: idx + 1 }))).map((wine) => {
+              const g = participantGuesses?.find(x => x.wineId === wine.id);
+              return (
+                <div key={wine.id} className="p-3 rounded border bg-gray-50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <span className="h-7 w-7 mr-2 flex items-center justify-center rounded-full bg-[#274E37] text-white">
+                        {wine.letterCode}
+                      </span>
+                      <div>
+                        <div className="font-medium">{wine.producer} {wine.name}</div>
+                        <div className="text-xs text-gray-600">{wine.region}, {wine.country}, {wine.vintage}</div>
+                      </div>
+                    </div>
+                    <Badge className="bg-[#274E37]">{g?.score ?? 0} Pkt</Badge>
+                  </div>
+                  <div className="mt-2 text-sm text-gray-700">
+                    <div className="font-medium">Tipp des Teilnehmers</div>
+                    {g ? (
+                      <div className="text-xs">
+                        {g.country || '-'}, {g.region || '-'}, {g.producer || '-'}, {g.name || '-'}, {g.vintage || '-'}{g.varietals && g.varietals.length ? `, ${g.varietals.join(', ')}` : ''}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-gray-500">Kein Tipp abgegeben</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

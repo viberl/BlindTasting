@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation, UseQueryOptions } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -81,6 +81,8 @@ export default function WinesSetup() {
   } as UseQueryOptions<Flight[], Error> & { onSettled?: (data: Flight[] | undefined, error: Error | null) => void };
 
   const { data: flights, isLoading: flightsLoading, refetch: refetchFlights } = useQuery(flightsQueryOptions);
+
+  const allFlightsCompleted = useMemo(() => (flights && flights.length > 0 && flights.every((f: any) => !!f.completedAt)), [flights]);
 
   const createFlightMutation = useMutation({
     mutationFn: async (flightData: { tastingId: number; name: string; orderIndex: number; timeLimit: number }) => {
@@ -220,7 +222,8 @@ export default function WinesSetup() {
               <Button 
                 variant="outline" 
                 className="flex items-center"
-                onClick={() => setAddFlightDialogOpen(true)}
+                onClick={() => !allFlightsCompleted && setAddFlightDialogOpen(true)}
+                disabled={allFlightsCompleted}
               >
                 <Plus className="h-4 w-4 mr-2" />
                 Add Flight
@@ -258,7 +261,8 @@ export default function WinesSetup() {
                               size="sm" 
                               variant="outline"
                               className="flex items-center"
-                              onClick={() => setAddWineDialogOpen(true)}
+                              onClick={() => !allFlightsCompleted && setAddWineDialogOpen(true)}
+                              disabled={allFlightsCompleted}
                             >
                               <Plus className="h-4 w-4 mr-2" />
                               Wein hinzufügen
@@ -282,7 +286,8 @@ export default function WinesSetup() {
                               <Button 
                                 variant="outline" 
                                 className="mt-4"
-                                onClick={() => setAddWineDialogOpen(true)}
+                                onClick={() => !allFlightsCompleted && setAddWineDialogOpen(true)}
+                                disabled={allFlightsCompleted}
                               >
                                 <Plus className="h-4 w-4 mr-2" />
                                 Add Your First Wine
@@ -303,8 +308,9 @@ export default function WinesSetup() {
                   Create flights to organize your wines. Each flight can contain multiple wines for tasters to identify.
                 </p>
                 <Button 
-                  onClick={() => setAddFlightDialogOpen(true)}
+                  onClick={() => !allFlightsCompleted && setAddFlightDialogOpen(true)}
                   className="bg-[#274E37] hover:bg-[#e65b2d]"
+                  disabled={allFlightsCompleted}
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Create Your First Flight

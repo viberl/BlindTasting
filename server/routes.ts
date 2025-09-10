@@ -100,6 +100,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Setup authentication routes
   setupAuth(app);
 
+  // Quick health check
+  app.get('/api/ping', (_req, res) => res.json({ ok: true, pong: true }));
+
   // Vinaturel API integration for wine data
   app.get("/api/vinaturel/wines", process.env.NODE_ENV === 'development' ? (req, res, next) => next() : ensureAuthenticated, async (req, res) => {
     try {
@@ -333,9 +336,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!tasting) {
         return res.status(404).json({ error: "Tasting not found" });
       }
-      // Ensure status is always set
-      if (!tasting.status) {
-        tasting.status = 'draft';
+      // Ensure status is always set, and auto-complete when all flights are completed
+      try {
+        const totalRes = await db.execute(sql`SELECT COUNT(*)::int AS total FROM flights WHERE tasting_id = ${tastingId}`);
+        const total = (totalRes.rows?.[0] as any)?.total ?? 0;
+        if (total > 0) {
+          const openRes = await db.execute(sql`
+            SELECT COUNT(*)::int AS open
+            FROM flights
+            WHERE tasting_id = ${tastingId}
+              AND completed_at IS NULL
+          `);
+          const open = (openRes.rows?.[0] as any)?.open ?? 0;
+          const allCompleted = open === 0;
+          if (allCompleted && tasting.status !== 'completed') {
+            try {
+              const updated = await storage.updateTastingStatus(tastingId, 'completed');
+              tasting.status = updated.status;
+            } catch {}
+          }
+        }
+        if (!tasting.status) {
+          tasting.status = 'draft';
+        }
+      } catch {
+        if (!tasting.status) tasting.status = 'draft';
       }
       res.json(tasting);
     } catch (error) {
@@ -509,6 +534,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const tastingId = parseInt(req.params.tastingId);
     console.log('Creating flight for tasting:', tastingId);
     try {
+      // Prevent creating flights if all existing flights are completed (robust DB check)
+      const totalRes = await db.execute(sql`SELECT COUNT(*)::int AS total FROM flights WHERE tasting_id = ${tastingId}`);
+      const total = (totalRes.rows?.[0] as any)?.total ?? 0;
+      if (total > 0) {
+        const openRes = await db.execute(sql`
+          SELECT COUNT(*)::int AS open
+          FROM flights
+          WHERE tasting_id = ${tastingId}
+            AND completed_at IS NULL
+        `);
+        const open = (openRes.rows?.[0] as any)?.open ?? 0;
+        if (open === 0) {
+          return res.status(400).json({ error: 'Alle Flights wurden bereits abgeschlossen. Es können keine weiteren Flights hinzugefügt werden.' });
+        }
+      }
+
       const existingFlights = await storage.getFlightsByTasting(tastingId);
       const flightData = {
         tastingId,
@@ -638,15 +679,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const timeLimit = (minutes * 60) || 0; // seconds
 
       // Broadcast timer started to clients
-      if (joinRooms.has(tasting.id)) {
+      if (joinRooms.has(tasting!.id)) {
         const payload = JSON.stringify({
           type: 'timer_started',
-          tastingId: tasting.id,
+          tastingId: tasting!.id,
           flightId: flightId,
           timeLimit,
           startedAt: new Date().toISOString(),
         });
-        for (const client of joinRooms.get(tasting.id) || []) {
+        for (const client of joinRooms.get(tasting!.id) || []) {
           if (client.readyState === 1) {
             try { client.send(payload); } catch {}
           }
@@ -671,12 +712,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Punkte berechnen wie im manuellen Abschluss
             try {
               const winesInFlight = await storage.getWinesByFlight(flightId);
-              const participantsInTasting = await storage.getParticipantsByTasting(tasting.id);
-              let rules = await storage.getScoringRule(tasting.id);
+              const participantsInTasting = await storage.getParticipantsByTasting(tasting!.id);
+              let rules = await storage.getScoringRule(tasting!.id);
               if (!rules) {
                 // Fallback: lege Standard‑Regeln an, damit Punkte berechnet werden können
                 rules = await storage.createScoringRule({
-                  tastingId: tasting.id,
+                  tastingId: tasting!.id,
                   country: 1,
                   region: 1,
                   producer: 1,
@@ -722,9 +763,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   await storage.updateParticipantScore(participant.id, current + addScore);
                 }
                 // Scores updated broadcast
-                if (joinRooms.has(tasting.id)) {
-                  const payloadScores = JSON.stringify({ type: 'scores_updated', tastingId: tasting.id, flightId });
-                  for (const client of joinRooms.get(tasting.id) || []) {
+                if (joinRooms.has(tasting!.id)) {
+                  const payloadScores = JSON.stringify({ type: 'scores_updated', tastingId: tasting!.id, flightId });
+                  for (const client of joinRooms.get(tasting!.id) || []) {
                     if (client.readyState === 1) { try { client.send(payloadScores); } catch {} }
                   }
                 }
@@ -736,36 +777,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Prüfen, ob alle Flights abgeschlossen sind
             let allCompleted = false;
             try {
-              // Regel: Endergebnis wenn (nur 1 Flight insgesamt) ODER (alle gestarteten Flights abgeschlossen)
-              const totalRes = await db.execute(sql`SELECT COUNT(*)::int AS total FROM flights WHERE tasting_id = ${tasting.id}`);
+              const totalRes = await db.execute(sql`SELECT COUNT(*)::int AS total FROM flights WHERE tasting_id = ${tasting!.id}`);
               const total = (totalRes.rows?.[0] as any)?.total ?? 0;
-              if (total === 1) {
-                allCompleted = true;
-              } else {
-                const res = await db.execute(sql`
-                  SELECT COUNT(*)::int AS cnt
+              if (total > 0) {
+                const openRes = await db.execute(sql`
+                  SELECT COUNT(*)::int AS open
                   FROM flights
-                  WHERE tasting_id = ${tasting.id}
-                    AND started_at IS NOT NULL
+                  WHERE tasting_id = ${tasting!.id}
                     AND completed_at IS NULL
                 `);
-                const cnt = (res.rows?.[0] as any)?.cnt ?? 0;
-                allCompleted = cnt === 0;
+                const open = (openRes.rows?.[0] as any)?.open ?? 0;
+                allCompleted = open === 0;
               }
             } catch {}
 
+            // Wenn alle Flights abgeschlossen sind → Tasting-Status auf 'completed'
+            if (allCompleted) {
+              try { await storage.updateTastingStatus(tasting!.id, 'completed'); } catch {}
+            }
             // Broadcast completion so clients can redirect immediately
-            if (joinRooms.has(tasting.id)) {
+            if (joinRooms.has(tasting!.id)) {
               const payload = JSON.stringify({
                 type: 'flight_completed',
-                tastingId: tasting.id,
+                tastingId: tasting!.id,
                 flightId: flightId,
                 completedAt: new Date().toISOString(),
                 allCompleted,
               });
-              for (const client of joinRooms.get(tasting.id) || []) {
+              for (const client of joinRooms.get(tasting!.id) || []) {
                 if (client.readyState === 1) {
                   try { client.send(payload); } catch {}
+                }
+              }
+              if (allCompleted) {
+                const payloadStatus = JSON.stringify({ type: 'tasting_status', status: 'completed', tastingId: tasting!.id, timestamp: new Date().toISOString() });
+                for (const client of joinRooms.get(tasting!.id) || []) {
+                  if (client.readyState === 1) { try { client.send(payloadStatus); } catch {} }
                 }
               }
             }
@@ -898,22 +945,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Prüfen, ob alle Flights abgeschlossen sind und an Clients signalisieren
       try {
-        // Regel: Endergebnis wenn (nur 1 Flight insgesamt) ODER (alle gestarteten Flights abgeschlossen)
         const totalRes = await db.execute(sql`SELECT COUNT(*)::int AS total FROM flights WHERE tasting_id = ${tasting.id}`);
         const total = (totalRes.rows?.[0] as any)?.total ?? 0;
         let allCompleted = false;
-        if (total === 1) {
-          allCompleted = true;
-        } else {
-          const res = await db.execute(sql`
-            SELECT COUNT(*)::int AS cnt
+        if (total > 0) {
+          const openRes = await db.execute(sql`
+            SELECT COUNT(*)::int AS open
             FROM flights
             WHERE tasting_id = ${tasting.id}
-              AND started_at IS NOT NULL
               AND completed_at IS NULL
           `);
-          const cnt = (res.rows?.[0] as any)?.cnt ?? 0;
-          allCompleted = cnt === 0;
+          const open = (openRes.rows?.[0] as any)?.open ?? 0;
+          allCompleted = open === 0;
+        }
+        // Wenn jetzt alle Flights abgeschlossen sind → Tasting-Status auf 'completed'
+        if (allCompleted) {
+          try { await storage.updateTastingStatus(tasting.id, 'completed'); } catch (e) { console.warn('Update tasting to completed failed', e); }
         }
         if (joinRooms.has(tasting.id)) {
           const payload = JSON.stringify({
@@ -926,6 +973,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           for (const client of joinRooms.get(tasting.id) || []) {
             if (client.readyState === 1) {
               try { client.send(payload); } catch {}
+            }
+          }
+          if (allCompleted) {
+            const payloadStatus = JSON.stringify({ type: 'tasting_status', status: 'completed', tastingId: tasting.id, timestamp: new Date().toISOString() });
+            for (const client of joinRooms.get(tasting.id) || []) {
+              if (client.readyState === 1) { try { client.send(payloadStatus); } catch {} }
             }
           }
         }
@@ -966,6 +1019,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tasting = await storage.getTasting(flight.tastingId);
       if (!tasting) {
         return res.status(404).json({ error: "Tasting not found" });
+      }
+
+      // Block adding wines if the flight is completed or all flights are completed for this tasting
+      const flightsOfTasting = await storage.getFlightsByTasting(tasting.id);
+      const tastingHasFlights = flightsOfTasting.length > 0;
+      const tastingAllCompleted = tastingHasFlights && flightsOfTasting.every(f => !!f.completedAt);
+      if (flight.completedAt || tastingAllCompleted) {
+        return res.status(400).json({ error: 'Weine können nicht hinzugefügt werden, da der Flight oder die Verkostung abgeschlossen ist.' });
       }
       
       // Im Entwicklungsmodus Zugriff erlauben
@@ -1464,6 +1525,157 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json({ flightId, tastingId: tasting.id, stats });
     } catch (error) {
       console.error('Error fetching guess stats:', error);
+      return res.status(500).json({ error: 'Server error' });
+    }
+  });
+
+  // Detailed performance statistics per flight (host view)
+  app.get('/api/flights/:id/stats', ensureAuthenticated, async (req, res) => {
+    try {
+      const flightId = parseInt(req.params.id, 10);
+      if (isNaN(flightId)) return res.status(400).json({ error: 'Invalid flight id' });
+
+      // Fetch flight and tasting
+      const flightRows = await db
+        .select()
+        .from(flights)
+        .where(eq(flights.id, flightId))
+        .limit(1);
+      const flight = flightRows[0];
+      if (!flight) return res.status(404).json({ error: 'Flight not found' });
+
+      const tasting = await storage.getTasting(flight.tastingId);
+      if (!tasting) return res.status(404).json({ error: 'Tasting not found' });
+
+      if (req.user?.id !== tasting.hostId) {
+        return res.status(403).json({ error: 'Only the host can view flight stats' });
+      }
+
+      // Participants count
+      const totalParticipantsRes = await db.execute(sql`SELECT COUNT(*)::int AS cnt FROM participants WHERE tasting_id = ${tasting.id}`);
+      const totalParticipants = (totalParticipantsRes.rows?.[0] as any)?.cnt ?? 0;
+
+      // Top scorer of this flight
+      const topScorerRes = await db.execute(sql`
+        SELECT p.id as "participantId", u.name as "userName", COALESCE(SUM(g.score), 0)::int AS "score"
+        FROM participants p
+        JOIN users u ON u.id = p.user_id
+        LEFT JOIN guesses g ON g.participant_id = p.id
+        LEFT JOIN wines w ON w.id = g.wine_id AND w.flight_id = ${flightId}
+        WHERE p.tasting_id = ${tasting.id}
+        GROUP BY p.id, u.name
+        ORDER BY "score" DESC, u.name ASC
+        LIMIT 1
+      `);
+      const topScorer = (topScorerRes.rows?.[0] as any) || null;
+
+      // Recognition by wine: sum of scores per wine
+      const recogRes = await db.execute(sql`
+        SELECT w.id as "wineId", w.letter_code as "letterCode", w.producer, w.name,
+               COALESCE(SUM(g.score), 0)::int AS "totalScore"
+        FROM wines w
+        LEFT JOIN guesses g ON g.wine_id = w.id
+        WHERE w.flight_id = ${flightId}
+        GROUP BY w.id, w.letter_code, w.producer, w.name
+        ORDER BY w.id
+      `);
+      const recogRows = (recogRes.rows as any[]) || [];
+      // Compute normalized average score over ALL participants
+      const withAvg = recogRows.map(r => ({ ...r, avgScore: totalParticipants > 0 ? Number(r.totalScore) / totalParticipants : 0 }));
+      const bestRecognizedWine = withAvg.length ? withAvg.reduce((a, b) => (a.avgScore >= b.avgScore ? a : b)) : null;
+      const worstRecognizedWine = withAvg.length ? withAvg.reduce((a, b) => (a.avgScore <= b.avgScore ? a : b)) : null;
+
+      // Ratings per wine
+      const ratingRes = await db.execute(sql`
+        SELECT w.id as "wineId", w.letter_code as "letterCode", w.producer, w.name,
+               AVG(g.rating)::float AS "avgRating",
+               COUNT(g.rating)::int AS "count"
+        FROM wines w
+        LEFT JOIN guesses g ON g.wine_id = w.id AND g.rating IS NOT NULL
+        WHERE w.flight_id = ${flightId}
+        GROUP BY w.id, w.letter_code, w.producer, w.name
+      `);
+      const ratingRows = (ratingRes.rows as any[]) || [];
+      const bestRatedWine = ratingRows.length ? ratingRows.reduce((a, b) => ((a.avgRating ?? -Infinity) >= (b.avgRating ?? -Infinity) ? a : b)) : null;
+      const worstRatedWine = ratingRows.length ? ratingRows.reduce((a, b) => ((a.avgRating ?? Infinity) <= (b.avgRating ?? Infinity) ? a : b)) : null;
+
+      return res.json({
+        flightId,
+        tastingId: tasting.id,
+        totalParticipants,
+        topScorer,
+        bestRecognizedWine,
+        worstRecognizedWine,
+        bestRatedWine,
+        worstRatedWine,
+      });
+    } catch (error) {
+      console.error('Error fetching flight stats:', error);
+      return res.status(500).json({ error: 'Server error' });
+    }
+  });
+
+  // Final result statistics for a tasting (host view)
+  app.get('/api/tastings/:id/final-stats', ensureAuthenticated, async (req, res) => {
+    try {
+      const tastingId = parseInt(req.params.id, 10);
+      if (isNaN(tastingId)) return res.status(400).json({ error: 'Invalid tasting id' });
+
+      const tasting = await storage.getTasting(tastingId);
+      if (!tasting) return res.status(404).json({ error: 'Tasting not found' });
+      if (req.user?.id !== tasting.hostId) {
+        return res.status(403).json({ error: 'Only the host can view final stats' });
+      }
+
+      // Ensure all flights completed
+      const flightsList = await storage.getFlightsByTasting(tastingId);
+      const allCompleted = flightsList.length > 0 && flightsList.every(f => !!f.completedAt);
+      if (!allCompleted) {
+        return res.status(400).json({ error: 'Final stats are available after all flights are completed' });
+      }
+
+      // Participant count
+      const totalParticipantsRes = await db.execute(sql`SELECT COUNT(*)::int AS cnt FROM participants WHERE tasting_id = ${tastingId}`);
+      const totalParticipants = (totalParticipantsRes.rows?.[0] as any)?.cnt ?? 0;
+
+      // Recognition across all wines of the tasting
+      const recogRes = await db.execute(sql`
+        SELECT w.id as "wineId", w.letter_code as "letterCode", w.producer, w.name,
+               COALESCE(SUM(g.score), 0)::int AS "totalScore"
+        FROM wines w
+        JOIN flights f ON f.id = w.flight_id AND f.tasting_id = ${tastingId}
+        LEFT JOIN guesses g ON g.wine_id = w.id
+        GROUP BY w.id, w.letter_code, w.producer, w.name
+      `);
+      const recogRows = (recogRes.rows as any[]) || [];
+      const withAvg = recogRows.map(r => ({ ...r, avgScore: totalParticipants > 0 ? Number(r.totalScore) / totalParticipants : 0 }));
+      const bestRecognizedWine = withAvg.length ? withAvg.reduce((a, b) => (a.avgScore >= b.avgScore ? a : b)) : null;
+      const worstRecognizedWine = withAvg.length ? withAvg.reduce((a, b) => (a.avgScore <= b.avgScore ? a : b)) : null;
+
+      // Ratings across all wines
+      const ratingRes = await db.execute(sql`
+        SELECT w.id as "wineId", w.letter_code as "letterCode", w.producer, w.name,
+               AVG(g.rating)::float AS "avgRating",
+               COUNT(g.rating)::int AS "count"
+        FROM wines w
+        JOIN flights f ON f.id = w.flight_id AND f.tasting_id = ${tastingId}
+        LEFT JOIN guesses g ON g.wine_id = w.id AND g.rating IS NOT NULL
+        GROUP BY w.id, w.letter_code, w.producer, w.name
+      `);
+      const ratingRows = (ratingRes.rows as any[]) || [];
+      const bestRatedWine = ratingRows.length ? ratingRows.reduce((a, b) => ((a.avgRating ?? -Infinity) >= (b.avgRating ?? -Infinity) ? a : b)) : null;
+      const worstRatedWine = ratingRows.length ? ratingRows.reduce((a, b) => ((a.avgRating ?? Infinity) <= (b.avgRating ?? Infinity) ? a : b)) : null;
+
+      return res.json({
+        tastingId,
+        totalParticipants,
+        bestRecognizedWine,
+        worstRecognizedWine,
+        bestRatedWine,
+        worstRatedWine,
+      });
+    } catch (error) {
+      console.error('Error fetching final stats:', error);
       return res.status(500).json({ error: 'Server error' });
     }
   });

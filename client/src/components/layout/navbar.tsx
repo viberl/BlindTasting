@@ -52,10 +52,10 @@ export default function Navbar() {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   className="cursor-pointer"
-                  onClick={() => navigate("/")}
+                  onClick={() => navigate("/my-tastings")}
                 >
                   <Wine className="mr-2 h-4 w-4" />
-                  <span>Meine Tastings</span>
+                  <span>Meine Verkostungen</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="cursor-pointer"

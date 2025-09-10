@@ -20,17 +20,21 @@ import SubmitGuesses from "@/pages/taster/submit-guesses";
 import IntermediateResults from "@/pages/taster/intermediate-results";
 import FinalResults from "@/pages/taster/final-results";
 import ProfilePage from "@/pages/profile";
+import MyTastingsPage from "@/pages/my-tastings";
+import HostDashboard from "@/pages/host/dashboard";
 
 function Router() {
   return (
     <Switch>
       <ProtectedRoute path="/" component={HomePage} />
       <ProtectedRoute path="/host/create-tasting" component={CreateTastingPage} />
+      <ProtectedRoute path="/host/dashboard/:id" component={HostDashboard} />
       <ProtectedRoute path="/host/tasting/:id" component={TastingDetailPage} />
       <ProtectedRoute path="/tasting/:id/submit" component={SubmitGuesses} />
       <ProtectedRoute path="/tasting/:id/intermediate" component={IntermediateResults} />
       <ProtectedRoute path="/tasting/:id/results" component={FinalResults} />
       <ProtectedRoute path="/profile" component={ProfilePage} />
+      <ProtectedRoute path="/my-tastings" component={MyTastingsPage} />
       <ProtectedRoute path="/taster/join/:id" component={JoinPage} />
       <ProtectedRoute path="/taster/waiting/:id" component={WaitingPage} />
       <Route path="/auth" component={AuthPage} />

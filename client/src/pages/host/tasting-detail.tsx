@@ -19,7 +19,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Input } from "@/components/ui/input";
 
 interface Participant {
@@ -237,6 +237,9 @@ export default function TastingDetailPage() {
             setTimeLeft(null);
             setWsTimerActive(false);
             queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
+          } else if (data.type === 'tasting_status') {
+            // Status der Verkostung hat sich geändert (z.B. completed)
+            queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}`] });
           }
         } catch (e) {
           console.error('Fehler beim Verarbeiten der WebSocket-Nachricht:', e);
@@ -367,6 +370,39 @@ export default function TastingDetailPage() {
     },
     enabled: !isNaN(tastingId) && !!tasting,
     staleTime: 0, // Immer sofort neu laden!
+  });
+
+  // Flag: Alle Flights abgeschlossen
+  const allFlightsCompleted = useMemo(() => (flights && flights.length > 0 && flights.every(f => !!f.completedAt)), [flights]);
+
+  // Letzter abgeschlossener Flight (für Zwischenergebnis)
+  const lastCompletedFlight = useMemo(() => {
+    const completed = (flights || []).filter(f => !!f.completedAt);
+    if (completed.length === 0) return null;
+    completed.sort((a, b) => new Date(b.completedAt as any).getTime() - new Date(a.completedAt as any).getTime());
+    return completed[0];
+  }, [flights]);
+
+  // Stats für letzten abgeschlossenen Flight
+  const { data: lastCompletedStats } = useQuery<any>({
+    queryKey: lastCompletedFlight?.id ? ["/api/flights", lastCompletedFlight.id, "stats", "latest"] : ["latest-flight-stats", "none"],
+    queryFn: async () => {
+      const res = await apiRequest('GET', `/api/flights/${lastCompletedFlight!.id}/stats`);
+      if (!res.ok) throw new Error('Fehler beim Laden der Zwischenergebnisse');
+      return res.json();
+    },
+    enabled: !!lastCompletedFlight?.id && !allFlightsCompleted,
+  });
+
+  // Final-Statistiken, wenn alles abgeschlossen
+  const { data: finalStats } = useQuery<any>({
+    queryKey: allFlightsCompleted ? ["/api/tastings", tastingId, "final-stats"] : ["final-stats", "none"],
+    queryFn: async () => {
+      const res = await apiRequest('GET', `/api/tastings/${tastingId}/final-stats`);
+      if (!res.ok) throw new Error('Fehler beim Laden der Endergebnis-Statistiken');
+      return res.json();
+    },
+    enabled: !!tastingId && allFlightsCompleted,
   });
 
   // Einladungen laden
@@ -708,8 +744,8 @@ export default function TastingDetailPage() {
         <div>
           <h1 className="text-2xl font-bold">{tasting.name}</h1>
           <div className="flex gap-2 mt-2">
-            <Badge variant={tasting.status === 'active' ? 'default' : tasting.status === 'started' ? 'secondary' : 'outline'}>
-              {tasting.status === 'active' ? 'Aktiv' : tasting.status === 'started' ? 'Gestartet' : 'Entwurf'}
+            <Badge variant={allFlightsCompleted ? 'secondary' : tasting.status === 'active' ? 'default' : tasting.status === 'started' ? 'secondary' : 'outline'}>
+              {allFlightsCompleted ? 'Abgeschlossen' : tasting.status === 'active' ? 'Aktiv' : tasting.status === 'started' ? 'Gestartet' : 'Entwurf'}
             </Badge>
             <Badge variant={tasting.isPublic ? 'default' : 'outline'}>
               {tasting.isPublic ? 'Öffentlich' : 'Privat'}
@@ -718,17 +754,17 @@ export default function TastingDetailPage() {
         </div>
 
         <div className="flex gap-2">
-          {tasting.status === 'draft' && (
+          {tasting.status === 'draft' && !allFlightsCompleted && (
             <Button onClick={() => updateTastingStatus('active')} disabled={isUpdatingStatus}>
               Verkostung veröffentlichen
             </Button>
           )}
-          {tasting.status === 'active' && (
+          {tasting.status === 'active' && !allFlightsCompleted && (
             <Button onClick={() => updateTastingStatus('started')} disabled={isUpdatingStatus}>
               Verkostung starten
             </Button>
           )}
-          {tasting.status === 'started' && (
+          {tasting.status === 'started' && !allFlightsCompleted && (
             <Button onClick={startNextFlight} disabled={isStartingFlight}>
               Nächster Flight starten
             </Button>
@@ -879,6 +915,62 @@ export default function TastingDetailPage() {
         </TabsContent>
 
         <TabsContent value="flights" className="space-y-6">
+          {/* Kompakte Statistiken: Zwischen- oder Endergebnis */}
+          {!allFlightsCompleted && lastCompletedFlight && lastCompletedStats && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Zwischenergebnis – {lastCompletedFlight.name}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div>
+                  <span className="font-medium">Bester Verkoster: </span>
+                  {lastCompletedStats.topScorer ? `${lastCompletedStats.topScorer.userName} (${lastCompletedStats.topScorer.score} Pkt)` : '—'}
+                </div>
+                <div>
+                  <span className="font-medium">Am besten erkannt: </span>
+                  {lastCompletedStats.bestRecognizedWine ? `(${lastCompletedStats.bestRecognizedWine.letterCode}) ${lastCompletedStats.bestRecognizedWine.producer} ${lastCompletedStats.bestRecognizedWine.name} – ∅ ${Number(lastCompletedStats.bestRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+                </div>
+                <div>
+                  <span className="font-medium">Am schlechtesten erkannt: </span>
+                  {lastCompletedStats.worstRecognizedWine ? `(${lastCompletedStats.worstRecognizedWine.letterCode}) ${lastCompletedStats.worstRecognizedWine.producer} ${lastCompletedStats.worstRecognizedWine.name} – ∅ ${Number(lastCompletedStats.worstRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+                </div>
+                <div>
+                  <span className="font-medium">Bestbewertet: </span>
+                  {lastCompletedStats.bestRatedWine && lastCompletedStats.bestRatedWine.count > 0 ? `(${lastCompletedStats.bestRatedWine.letterCode}) ${lastCompletedStats.bestRatedWine.producer} ${lastCompletedStats.bestRatedWine.name} – ∅ ${Number(lastCompletedStats.bestRatedWine.avgRating).toFixed(2)} (${lastCompletedStats.bestRatedWine.count})` : '—'}
+                </div>
+                <div>
+                  <span className="font-medium">Schlecht bewertet: </span>
+                  {lastCompletedStats.worstRatedWine && lastCompletedStats.worstRatedWine.count > 0 ? `(${lastCompletedStats.worstRatedWine.letterCode}) ${lastCompletedStats.worstRatedWine.producer} ${lastCompletedStats.worstRatedWine.name} – ∅ ${Number(lastCompletedStats.worstRatedWine.avgRating).toFixed(2)} (${lastCompletedStats.worstRatedWine.count})` : '—'}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {allFlightsCompleted && finalStats && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Endergebnis‑Statistiken</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div>
+                  <span className="font-medium">Am besten erkannt (gesamt): </span>
+                  {finalStats.bestRecognizedWine ? `(${finalStats.bestRecognizedWine.letterCode}) ${finalStats.bestRecognizedWine.producer} ${finalStats.bestRecognizedWine.name} – ∅ ${Number(finalStats.bestRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+                </div>
+                <div>
+                  <span className="font-medium">Am schlechtesten erkannt (gesamt): </span>
+                  {finalStats.worstRecognizedWine ? `(${finalStats.worstRecognizedWine.letterCode}) ${finalStats.worstRecognizedWine.producer} ${finalStats.worstRecognizedWine.name} – ∅ ${Number(finalStats.worstRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+                </div>
+                <div>
+                  <span className="font-medium">Bestbewerteter Wein: </span>
+                  {finalStats.bestRatedWine && finalStats.bestRatedWine.count > 0 ? `(${finalStats.bestRatedWine.letterCode}) ${finalStats.bestRatedWine.producer} ${finalStats.bestRatedWine.name} – ∅ ${Number(finalStats.bestRatedWine.avgRating).toFixed(2)} (${finalStats.bestRatedWine.count})` : '—'}
+                </div>
+                <div>
+                  <span className="font-medium">Schlechtester Wein (Bewertung): </span>
+                  {finalStats.worstRatedWine && finalStats.worstRatedWine.count > 0 ? `(${finalStats.worstRatedWine.letterCode}) ${finalStats.worstRatedWine.producer} ${finalStats.worstRatedWine.name} – ∅ ${Number(finalStats.worstRatedWine.avgRating).toFixed(2)} (${finalStats.worstRatedWine.count})` : '—'}
+                </div>
+              </CardContent>
+            </Card>
+          )}
           {isFlightsLoading ? (
             <div className="flex justify-center p-10">
               <Loader2 className="h-6 w-6 animate-spin text-[#274E37]" />
@@ -910,7 +1002,7 @@ export default function TastingDetailPage() {
                     <CardContent className="pt-6">
                       <FlightWineList flight={flight} />
 
-                      {isHost && (
+                      {isHost && !allFlightsCompleted && (
                         <div className="flex gap-2 mt-4">
                           <Button
                             variant="outline"
@@ -966,7 +1058,7 @@ export default function TastingDetailPage() {
             open={createFlightDialogOpen}
             onOpenChange={setCreateFlightDialogOpen}
           />
-          {isHost && (
+          {isHost && !allFlightsCompleted && (
             <div className="flex justify-center mt-6">
               <Button
                 className="bg-[#274E37] hover:bg-[#e65b2d]"

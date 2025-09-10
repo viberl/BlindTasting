@@ -22,9 +22,10 @@ interface LeaderboardProps {
   tastingId: number;
   displayCount?: number | null;
   currentUserId?: number;
+  onSelectParticipant?: (participant: Participant) => void;
 }
 
-export default function Leaderboard({ tastingId, displayCount, currentUserId }: LeaderboardProps) {
+export default function Leaderboard({ tastingId, displayCount, currentUserId, onSelectParticipant }: LeaderboardProps) {
   const { data: participants, isLoading } = useQuery<Participant[]>({
     queryKey: [`/api/tastings/${tastingId}/participants`],
   });
@@ -112,7 +113,9 @@ export default function Leaderboard({ tastingId, displayCount, currentUserId }: 
                 p-3 rounded-md border flex items-center space-x-3
                 ${getRankColor(rank)}
                 ${isCurrentUser ? 'ring-2 ring-[#274E37] ring-opacity-50' : ''}
+                ${onSelectParticipant ? 'cursor-pointer hover:opacity-90' : ''}
               `}
+              onClick={() => onSelectParticipant && onSelectParticipant(participant)}
             >
               <div className={`
                 h-8 w-8 flex items-center justify-center rounded-full 
