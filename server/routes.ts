@@ -97,6 +97,8 @@ async function ensureAuthenticated(req: Request, res: Response, next: Function) 
 export async function registerRoutes(app: Express): Promise<Server> {
   // In-memory WebSocket rooms for join page
   const joinRooms = new Map<number, Set<any>>();
+  // Simple in-memory cache for host user info during process lifetime
+  const hostUserCache = new Map<number, { name: string; company: string | null }>();
   // Setup authentication routes
   setupAuth(app);
 
@@ -362,6 +364,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch {
         if (!tasting.status) tasting.status = 'draft';
       }
+      // Hydrate host name/company with lightweight cache
+      try {
+        const cached = hostUserCache.get(tasting.hostId);
+        if (cached) {
+          (tasting as any).hostName = cached.name;
+          (tasting as any).hostCompany = cached.company ?? null;
+        } else {
+          const hostUser = await storage.getUser(tasting.hostId);
+          if (hostUser) {
+            hostUserCache.set(tasting.hostId, { name: hostUser.name || '', company: hostUser.company || null });
+            (tasting as any).hostName = hostUser.name || '';
+            (tasting as any).hostCompany = hostUser.company || null;
+          }
+        }
+      } catch {}
+
       res.json(tasting);
     } catch (error) {
       res.status(500).json({ error: (error as Error).message });
@@ -1064,6 +1082,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(wines);
     } catch (error) {
       res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
+  // Delete a wine (only if its flight not started/completed and requester is host)
+  app.delete('/api/wines/:id', ensureAuthenticated, async (req, res) => {
+    try {
+      const wineId = parseInt(req.params.id, 10);
+      const wineRows = await db.select().from(wines).where(eq(wines.id, wineId)).limit(1);
+      const wine = wineRows[0];
+      if (!wine) return res.status(404).json({ error: 'Wine not found' });
+      const flightRows = await db.select().from(flights).where(eq(flights.id, wine.flightId)).limit(1);
+      const flight = flightRows[0];
+      if (!flight) return res.status(404).json({ error: 'Flight not found' });
+      const tasting = await storage.getTasting(flight.tastingId);
+      if (!tasting) return res.status(404).json({ error: 'Tasting not found' });
+      if (tasting.hostId !== req.user!.id) return res.status(403).json({ error: 'Only host can delete wines' });
+      if (flight.startedAt || flight.completedAt) return res.status(400).json({ error: 'Cannot delete wine from started or completed flight' });
+      await db.delete(wines).where(eq(wines.id, wineId));
+      return res.json({ ok: true });
+    } catch (e) {
+      return res.status(500).json({ error: 'Server error' });
+    }
+  });
+
+  // Delete a flight (only if not started/completed and requester is host)
+  app.delete('/api/flights/:id', ensureAuthenticated, async (req, res) => {
+    try {
+      const flightId = parseInt(req.params.id, 10);
+      const flightRows = await db.select().from(flights).where(eq(flights.id, flightId)).limit(1);
+      const flight = flightRows[0];
+      if (!flight) return res.status(404).json({ error: 'Flight not found' });
+      const tasting = await storage.getTasting(flight.tastingId);
+      if (!tasting) return res.status(404).json({ error: 'Tasting not found' });
+      if (tasting.hostId !== req.user!.id) return res.status(403).json({ error: 'Only host can delete flights' });
+      if (flight.startedAt || flight.completedAt) return res.status(400).json({ error: 'Cannot delete started or completed flight' });
+      // Delete wines of this flight first
+      await db.delete(wines).where(eq(wines.flightId, flightId));
+      // Delete flight
+      await db.delete(flights).where(eq(flights.id, flightId));
+      return res.json({ ok: true });
+    } catch (e) {
+      return res.status(500).json({ error: 'Server error' });
     }
   });
 

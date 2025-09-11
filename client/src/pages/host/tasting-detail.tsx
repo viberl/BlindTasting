@@ -1,7 +1,9 @@
 import { useParams } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { Loader2, Wine, Clock, AlarmClock, X, Users, Trophy, User as UserIcon } from "lucide-react";
+import { Loader2, Wine, Clock, AlarmClock, X, Users, Trophy, User as UserIcon, Share2, ClipboardList, Calendar } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import Leaderboard from "@/components/tasting/leaderboard";
 
 // Typdefinitionen
 interface User {
@@ -40,7 +42,7 @@ interface Participant {
 // Dialoge für Erstellung von Flights und Hinzufügen von Weinen
 import AddWineDialog from "@/components/wine/add-wine-dialog";
 import SetTimerDialog from "@/components/flight/set-timer-dialog";
-import CreateFlightDialog from "@/components/flight/create-flight-dialog";
+// CreateFlightDialog entfernt: Direktes Erstellen ohne Dialog
 
 // Definiere Typen für unsere Daten
 interface Tasting {
@@ -86,7 +88,18 @@ interface FlightGuessStats {
   stats: Array<{ wineId: number; letterCode: string; submitted: number; total: number; missing: number }>;
 }
 
-function FlightWineList({ flight }: { flight: Flight }) {
+function FlightWineList({ flight, isHost }: { flight: Flight; isHost: boolean }) {
+  const queryClient = useQueryClient();
+  const deleteWineMutation = useMutation({
+    mutationFn: async (wineId: number) => {
+      const res = await apiRequest('DELETE', `/api/wines/${wineId}`);
+      return res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: [`/api/tastings/${flight.tastingId}/flights`] });
+      await queryClient.invalidateQueries({ queryKey: ["flight-guess-stats", flight.id] });
+    }
+  });
   const { data: guessStats } = useQuery<FlightGuessStats>({
     queryKey: ["flight-guess-stats", flight.id],
     queryFn: async () => {
@@ -110,7 +123,7 @@ function FlightWineList({ flight }: { flight: Flight }) {
       {flight.wines.map((wine: any) => {
         const s = statsMap.get(wine.id);
         return (
-          <div key={wine.id} className="flex items-center justify-between p-2 rounded bg-gray-50">
+          <div key={wine.id} className="flex items-center justify-between p-2 rounded bg-gray-50 relative">
             <div className="flex items-center">
               <div className="h-8 w-8 flex items-center justify-center bg-[#274E37] text-white rounded-full mr-3">
                 {wine.letterCode}
@@ -131,6 +144,17 @@ function FlightWineList({ flight }: { flight: Flight }) {
                 <span className="text-gray-400">Tipps: –</span>
               )}
             </div>
+            {isHost && !flight.startedAt && !flight.completedAt && (
+              <button
+                className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-red-100 text-red-600 hover:bg-red-200 flex items-center justify-center"
+                title="Wein entfernen"
+                onClick={() => {
+                  if (confirm('Diesen Wein aus dem Flight entfernen?')) deleteWineMutation.mutate(wine.id);
+                }}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
         );
       })}
@@ -237,6 +261,11 @@ export default function TastingDetailPage() {
             setTimeLeft(null);
             setWsTimerActive(false);
             queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
+            // Ranking/Teilnehmer aktualisieren
+            queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/participants`] });
+          } else if (data.type === 'scores_updated') {
+            // Punkte wurden neu berechnet → Ranking aktualisieren
+            queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/participants`] });
           } else if (data.type === 'tasting_status') {
             // Status der Verkostung hat sich geändert (z.B. completed)
             queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}`] });
@@ -334,7 +363,7 @@ export default function TastingDetailPage() {
   // State für Dialoge
   const [addWineDialogOpen, setAddWineDialogOpen] = useState(false);
   const [setTimerDialogOpen, setSetTimerDialogOpen] = useState(false);
-  const [createFlightDialogOpen, setCreateFlightDialogOpen] = useState(false);
+  // Dialog entfernt – wir erstellen Flights direkt per Klick
   const [selectedFlightId, setSelectedFlightId] = useState<number | null>(null);
   
   // State für Punktesystem und Einstellungen
@@ -405,6 +434,19 @@ export default function TastingDetailPage() {
     enabled: !!tastingId && allFlightsCompleted,
   });
 
+  // Teilnehmer-Details (Weine vs. Tipps) – Modal (muss VOR jeglicher Rückgabe definiert sein)
+  const [participantDialog, setParticipantDialog] = useState<{ open: boolean; participant: any | null }>({ open: false, participant: null });
+  type Guess = { id: number; wineId: number; score: number; rating?: number | null; country?: string | null; region?: string | null; producer?: string | null; name?: string | null; vintage?: string | null; varietals?: string[] | null };
+  const { data: participantGuesses } = useQuery<Guess[]>({
+    queryKey: participantDialog.participant ? ["/api/participants", participantDialog.participant.id, "guesses"] : ["participant-guesses", "none"],
+    queryFn: async () => {
+      const res = await apiRequest('GET', `/api/participants/${participantDialog.participant!.id}/guesses`);
+      if (!res.ok) throw new Error('Fehler beim Laden der Tipps');
+      return res.json();
+    },
+    enabled: !!participantDialog.participant?.id && participantDialog.open,
+  });
+
   // Einladungen laden
   type Invite = { tastingId: number; email: string; role: string };
   const { data: invites = [], refetch: refetchInvites } = useQuery<Invite[]>({
@@ -428,6 +470,40 @@ export default function TastingDetailPage() {
     },
     onError: (e: Error) => {
       toast({ title: "Fehler", description: e.message, variant: "destructive" });
+    }
+  });
+
+  // Flight direkt erstellen (ohne Dialog)
+  const createFlightMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/tastings/${tastingId}/flights`, {});
+      return res.json();
+    },
+    onSuccess: async () => {
+      toast({ title: 'Flight erstellt' });
+      await queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
+    },
+    onError: (e: Error) => {
+      toast({ title: 'Fehler', description: e.message, variant: 'destructive' });
+    }
+  });
+
+  // Flight löschen
+  const deleteFlightMutation = useMutation({
+    mutationFn: async (flightId: number) => {
+      const res = await apiRequest('DELETE', `/api/flights/${flightId}`);
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || 'Flight konnte nicht gelöscht werden');
+      }
+      return res.json();
+    },
+    onSuccess: async () => {
+      toast({ title: 'Flight entfernt' });
+      await queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
+    },
+    onError: (e: Error) => {
+      toast({ title: 'Fehler', description: e.message, variant: 'destructive' });
     }
   });
 
@@ -738,39 +814,85 @@ export default function TastingDetailPage() {
   const isHost = tasting.hostId === (user?.id || 1); // Temporär: Fallback für Entwicklung
   console.log('[DEBUG TastingDetailPage] isHost:', isHost, 'status:', tasting.status, 'user:', user, 'tasting:', tasting);
 
+  // Werte für Dashboard-Kacheln
+  const totalParticipants = (participants || []).filter(p => p.user?.id !== tasting.hostId).length;
+  const totalFlights = (flights || []).length;
+  const totalWines = (flights || []).reduce((acc, f) => acc + ((f as any).wines?.length || 0), 0);
+
+  // Beitrittslink kopieren
+  const copyJoinLink = () => {
+    const joinLink = `${window.location.origin}/tasting/${tastingId}`;
+    navigator.clipboard.writeText(joinLink);
+    toast({ title: 'Beitrittslink kopiert', description: 'Der Link wurde in die Zwischenablage kopiert.' });
+  };
+
+  // Weinlabel inkl. Flight: (Flight N - Wein A)
+  const formatWineLabel = (wineId?: number, letterCode?: string) => {
+    try {
+      if (!flights || !wineId) return letterCode ? `(Wein ${letterCode})` : '';
+      for (const f of flights) {
+        const w = (f as any).wines?.find((x: any) => x.id === wineId);
+        if (w) return `(Flight ${Number(f.orderIndex) + 1} - Wein ${letterCode || w.letterCode})`;
+      }
+      return letterCode ? `(Wein ${letterCode})` : '';
+    } catch { return letterCode ? `(Wein ${letterCode})` : ''; }
+  };
+
+  
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold">{tasting.name}</h1>
-          <div className="flex gap-2 mt-2">
-            <Badge variant={allFlightsCompleted ? 'secondary' : tasting.status === 'active' ? 'default' : tasting.status === 'started' ? 'secondary' : 'outline'}>
-              {allFlightsCompleted ? 'Abgeschlossen' : tasting.status === 'active' ? 'Aktiv' : tasting.status === 'started' ? 'Gestartet' : 'Entwurf'}
-            </Badge>
-            <Badge variant={tasting.isPublic ? 'default' : 'outline'}>
-              {tasting.isPublic ? 'Öffentlich' : 'Privat'}
-            </Badge>
+      {/* Dashboard-Header */}
+      <Card className="border border-primary/20 shadow-md overflow-hidden">
+        <CardHeader className="bg-gradient-to-r from-primary to-primary/90 p-6 text-white">
+          <div className="flex flex-col space-y-4 md:space-y-0 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold">{tasting.name}</h1>
+              <p className="text-white/90 mt-1">
+                Veranstaltet von {(tasting as any).hostName || participants?.find(p => p.user?.id === tasting.hostId)?.user?.name || 'Host'}
+                {(() => {
+                  const c = (tasting as any).hostCompany ?? participants?.find(p => p.user?.id === tasting.hostId)?.user?.company;
+                  return c ? ` (${c})` : '';
+                })()}
+              </p>
+            </div>
+              <div className="flex flex-col sm:flex-row gap-3 items-end sm:items-center w-full sm:w-auto">
+                <Badge className="self-start sm:self-auto" variant={allFlightsCompleted ? 'secondary' : tasting.status === 'active' ? 'default' : tasting.status === 'started' ? 'secondary' : 'outline'}>
+                  {allFlightsCompleted ? 'Abgeschlossen' : tasting.status === 'active' ? 'Aktiv' : tasting.status === 'started' ? 'Gestartet' : 'Entwurf'}
+                </Badge>
+                <div className="text-white/90 text-sm -mt-1">
+                  {`Teilnehmer ${totalParticipants} · Flights ${totalFlights} · Weine ${totalWines}`}
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                {!(allFlightsCompleted || tasting.status === 'completed') && (
+                  <Button
+                    variant="outline"
+                    className="bg-white/10 border-white/20 text-white hover:bg-white/20 hover:text-white w-full sm:w-auto"
+                    onClick={copyJoinLink}
+                  >
+                    <Share2 className="w-4 h-4 mr-2" />
+                    Beitrittslink kopieren
+                  </Button>
+                )}
+                {!allFlightsCompleted && (
+                  <>
+                    {tasting.status === 'draft' && (
+                      <Button className="bg-white text-primary hover:bg-white/90 w-full sm:w-auto" onClick={() => updateTastingStatus('active')}>
+                        Verkostung veröffentlichen
+                      </Button>
+                    )}
+                    {tasting.status === 'active' && (
+                      <Button className="bg-white text-primary hover:bg-white/90 w-full sm:w-auto" onClick={() => updateTastingStatus('started')}>
+                        Verkostung starten
+                      </Button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-
-        <div className="flex gap-2">
-          {tasting.status === 'draft' && !allFlightsCompleted && (
-            <Button onClick={() => updateTastingStatus('active')} disabled={isUpdatingStatus}>
-              Verkostung veröffentlichen
-            </Button>
-          )}
-          {tasting.status === 'active' && !allFlightsCompleted && (
-            <Button onClick={() => updateTastingStatus('started')} disabled={isUpdatingStatus}>
-              Verkostung starten
-            </Button>
-          )}
-          {tasting.status === 'started' && !allFlightsCompleted && (
-            <Button onClick={startNextFlight} disabled={isStartingFlight}>
-              Nächster Flight starten
-            </Button>
-          )}
-        </div>
-      </div>
+        </CardHeader>
+      </Card>
 
       <Tabs defaultValue="flights" className="w-full">
         <TabsList className="mb-6">
@@ -778,142 +900,12 @@ export default function TastingDetailPage() {
           <TabsTrigger value="participants">
             Teilnehmer ({participants ? participants.filter(p => p.user?.id !== tasting?.hostId).length : 0})
           </TabsTrigger>
-          <TabsTrigger value="scoring">Punktesystem</TabsTrigger>
+          {/* Punktesystem in Einstellungen integriert */}
           {isHost && <TabsTrigger value="settings">Einstellungen</TabsTrigger>}
         </TabsList>
         
-        <TabsContent value="participants" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Teilnehmer verwalten</CardTitle>
-              <CardDescription>
-                Hier sehen Sie alle Teilnehmer, die der Verkostung beigetreten sind.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {tasting && user?.id === tasting.hostId && (
-                <div className="mb-6">
-                  <h4 className="font-medium mb-2 flex items-center gap-2">
-                    <Users className="h-4 w-4" /> Einladungen
-                  </h4>
-                  <div className="flex gap-2 mb-3">
-                    <Input 
-                      placeholder="name@example.com" 
-                      value={inviteEmail}
-                      onChange={(e) => setInviteEmail(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          const email = inviteEmail.trim().toLowerCase();
-                          if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-                            addInviteMutation.mutate(email);
-                          } else {
-                            toast({ title: 'Ungültige E-Mail', variant: 'destructive' });
-                          }
-                        }
-                      }}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        const email = inviteEmail.trim().toLowerCase();
-                        if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-                          addInviteMutation.mutate(email);
-                        } else {
-                          toast({ title: 'Ungültige E-Mail', variant: 'destructive' });
-                        }
-                      }}
-                      disabled={addInviteMutation.isPending}
-                    >
-                      Hinzufügen
-                    </Button>
-                  </div>
-                  {invites.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                      {invites.map((i) => (
-                        <span key={i.email} className="inline-flex items-center gap-2 bg-gray-100 text-gray-800 rounded-full px-3 py-1 text-sm">
-                          {i.email}
-                          <button
-                            type="button"
-                            className="text-gray-500 hover:text-gray-700"
-                            onClick={() => removeInviteMutation.mutate(i.email)}
-                            aria-label={`Entferne ${i.email}`}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-gray-500">Noch keine Einladungen</p>
-                  )}
-                </div>
-              )}
-              {isParticipantsLoading ? (
-                <div className="flex justify-center p-6">
-                  <Loader2 className="h-6 w-6 animate-spin text-[#274E37]" />
-                </div>
-              ) : participants && participants.length > 0 ? (
-                <div className="space-y-3">
-                  {participants
-                    // Filtere den Veranstalter aus der Teilnehmerliste
-                    .filter(participant => participant.user?.id !== tasting.hostId)
-                    .map((participant) => (
-                      <div 
-                        key={participant.id} 
-                        className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors"
-                      >
-                        <div className="flex items-center space-x-3">
-                          <div className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center overflow-hidden">
-                            {participant.user?.profileImage ? (
-                              <img 
-                                src={participant.user.profileImage} 
-                                alt={participant.user.name || 'Profilbild'} 
-                                className="h-full w-full object-cover"
-                                onError={(e) => {
-                                  // Fallback, falls das Bild nicht geladen werden kann
-                                  const target = e.target as HTMLImageElement;
-                                  target.style.display = 'none';
-                                  target.parentElement?.querySelector('svg')?.classList.remove('hidden');
-                                }}
-                              />
-                            ) : null}
-                            <UserIcon className={`h-5 w-5 text-gray-500 ${participant.user?.profileImage ? 'hidden' : ''}`} />
-                          </div>
-                          <div>
-                            <p className="font-medium">{participant.user?.name || 'Unbekannter Benutzer'}</p>
-                            <p className="text-sm text-gray-500">
-                              {participant.user?.company || 'Keine Firma angegeben'}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          {isHost && participant.user?.id !== user?.id && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-red-500 hover:bg-red-50 hover:text-red-600"
-                              onClick={() => handleRemoveParticipant(participant.userId)}
-                              title="Teilnehmer entfernen"
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              ) : (
-                <div className="text-center py-8 text-gray-500">
-                  <UserIcon className="h-12 w-12 mx-auto mb-2 text-gray-300" />
-                  <p>Noch keine Teilnehmer beigetreten.</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
+        {/* Participants content moved lower with conditional rendering */}
+        
         <TabsContent value="flights" className="space-y-6">
           {/* Kompakte Statistiken: Zwischen- oder Endergebnis */}
           {!allFlightsCompleted && lastCompletedFlight && lastCompletedStats && (
@@ -928,19 +920,19 @@ export default function TastingDetailPage() {
                 </div>
                 <div>
                   <span className="font-medium">Am besten erkannt: </span>
-                  {lastCompletedStats.bestRecognizedWine ? `(${lastCompletedStats.bestRecognizedWine.letterCode}) ${lastCompletedStats.bestRecognizedWine.producer} ${lastCompletedStats.bestRecognizedWine.name} – ∅ ${Number(lastCompletedStats.bestRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+                  {lastCompletedStats.bestRecognizedWine ? `${formatWineLabel(lastCompletedStats.bestRecognizedWine.wineId, lastCompletedStats.bestRecognizedWine.letterCode)} ${lastCompletedStats.bestRecognizedWine.producer} ${lastCompletedStats.bestRecognizedWine.name} – ∅ ${Number(lastCompletedStats.bestRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
                 </div>
                 <div>
                   <span className="font-medium">Am schlechtesten erkannt: </span>
-                  {lastCompletedStats.worstRecognizedWine ? `(${lastCompletedStats.worstRecognizedWine.letterCode}) ${lastCompletedStats.worstRecognizedWine.producer} ${lastCompletedStats.worstRecognizedWine.name} – ∅ ${Number(lastCompletedStats.worstRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+                  {lastCompletedStats.worstRecognizedWine ? `${formatWineLabel(lastCompletedStats.worstRecognizedWine.wineId, lastCompletedStats.worstRecognizedWine.letterCode)} ${lastCompletedStats.worstRecognizedWine.producer} ${lastCompletedStats.worstRecognizedWine.name} – ∅ ${Number(lastCompletedStats.worstRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
                 </div>
                 <div>
                   <span className="font-medium">Bestbewertet: </span>
-                  {lastCompletedStats.bestRatedWine && lastCompletedStats.bestRatedWine.count > 0 ? `(${lastCompletedStats.bestRatedWine.letterCode}) ${lastCompletedStats.bestRatedWine.producer} ${lastCompletedStats.bestRatedWine.name} – ∅ ${Number(lastCompletedStats.bestRatedWine.avgRating).toFixed(2)} (${lastCompletedStats.bestRatedWine.count})` : '—'}
+                  {lastCompletedStats.bestRatedWine && lastCompletedStats.bestRatedWine.count > 0 ? `${formatWineLabel(lastCompletedStats.bestRatedWine.wineId, lastCompletedStats.bestRatedWine.letterCode)} ${lastCompletedStats.bestRatedWine.producer} ${lastCompletedStats.bestRatedWine.name} – ∅ ${Number(lastCompletedStats.bestRatedWine.avgRating).toFixed(2)} (${lastCompletedStats.bestRatedWine.count})` : '—'}
                 </div>
                 <div>
                   <span className="font-medium">Schlecht bewertet: </span>
-                  {lastCompletedStats.worstRatedWine && lastCompletedStats.worstRatedWine.count > 0 ? `(${lastCompletedStats.worstRatedWine.letterCode}) ${lastCompletedStats.worstRatedWine.producer} ${lastCompletedStats.worstRatedWine.name} – ∅ ${Number(lastCompletedStats.worstRatedWine.avgRating).toFixed(2)} (${lastCompletedStats.worstRatedWine.count})` : '—'}
+                  {lastCompletedStats.worstRatedWine && lastCompletedStats.worstRatedWine.count > 0 ? `${formatWineLabel(lastCompletedStats.worstRatedWine.wineId, lastCompletedStats.worstRatedWine.letterCode)} ${lastCompletedStats.worstRatedWine.producer} ${lastCompletedStats.worstRatedWine.name} – ∅ ${Number(lastCompletedStats.worstRatedWine.avgRating).toFixed(2)} (${lastCompletedStats.worstRatedWine.count})` : '—'}
                 </div>
               </CardContent>
             </Card>
@@ -954,19 +946,19 @@ export default function TastingDetailPage() {
               <CardContent className="space-y-2 text-sm">
                 <div>
                   <span className="font-medium">Am besten erkannt (gesamt): </span>
-                  {finalStats.bestRecognizedWine ? `(${finalStats.bestRecognizedWine.letterCode}) ${finalStats.bestRecognizedWine.producer} ${finalStats.bestRecognizedWine.name} – ∅ ${Number(finalStats.bestRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+                  {finalStats.bestRecognizedWine ? `${formatWineLabel(finalStats.bestRecognizedWine.wineId, finalStats.bestRecognizedWine.letterCode)} ${finalStats.bestRecognizedWine.producer} ${finalStats.bestRecognizedWine.name} – ∅ ${Number(finalStats.bestRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
                 </div>
                 <div>
                   <span className="font-medium">Am schlechtesten erkannt (gesamt): </span>
-                  {finalStats.worstRecognizedWine ? `(${finalStats.worstRecognizedWine.letterCode}) ${finalStats.worstRecognizedWine.producer} ${finalStats.worstRecognizedWine.name} – ∅ ${Number(finalStats.worstRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+                  {finalStats.worstRecognizedWine ? `${formatWineLabel(finalStats.worstRecognizedWine.wineId, finalStats.worstRecognizedWine.letterCode)} ${finalStats.worstRecognizedWine.producer} ${finalStats.worstRecognizedWine.name} – ∅ ${Number(finalStats.worstRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
                 </div>
                 <div>
                   <span className="font-medium">Bestbewerteter Wein: </span>
-                  {finalStats.bestRatedWine && finalStats.bestRatedWine.count > 0 ? `(${finalStats.bestRatedWine.letterCode}) ${finalStats.bestRatedWine.producer} ${finalStats.bestRatedWine.name} – ∅ ${Number(finalStats.bestRatedWine.avgRating).toFixed(2)} (${finalStats.bestRatedWine.count})` : '—'}
+                  {finalStats.bestRatedWine && finalStats.bestRatedWine.count > 0 ? `${formatWineLabel(finalStats.bestRatedWine.wineId, finalStats.bestRatedWine.letterCode)} ${finalStats.bestRatedWine.producer} ${finalStats.bestRatedWine.name} – ∅ ${Number(finalStats.bestRatedWine.avgRating).toFixed(2)} (${finalStats.bestRatedWine.count})` : '—'}
                 </div>
                 <div>
                   <span className="font-medium">Schlechtester Wein (Bewertung): </span>
-                  {finalStats.worstRatedWine && finalStats.worstRatedWine.count > 0 ? `(${finalStats.worstRatedWine.letterCode}) ${finalStats.worstRatedWine.producer} ${finalStats.worstRatedWine.name} – ∅ ${Number(finalStats.worstRatedWine.avgRating).toFixed(2)} (${finalStats.worstRatedWine.count})` : '—'}
+                  {finalStats.worstRatedWine && finalStats.worstRatedWine.count > 0 ? `${formatWineLabel(finalStats.worstRatedWine.wineId, finalStats.worstRatedWine.letterCode)} ${finalStats.worstRatedWine.producer} ${finalStats.worstRatedWine.name} – ∅ ${Number(finalStats.worstRatedWine.avgRating).toFixed(2)} (${finalStats.worstRatedWine.count})` : '—'}
                 </div>
               </CardContent>
             </Card>
@@ -983,9 +975,20 @@ export default function TastingDetailPage() {
                     <CardHeader className="bg-gray-50">
                       <div className="flex justify-between items-center">
                         <CardTitle className="text-xl">Flight {flight.orderIndex + 1}</CardTitle>
-                        <Badge variant={flight.completedAt ? 'secondary' : flight.startedAt ? 'default' : 'outline'}>
-                          {flight.completedAt ? 'Abgeschlossen' : flight.startedAt ? 'Im Gange' : 'Nicht gestartet'}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={flight.completedAt ? 'secondary' : flight.startedAt ? 'default' : 'outline'}>
+                            {flight.completedAt ? 'Abgeschlossen' : flight.startedAt ? 'Im Gange' : 'Nicht gestartet'}
+                          </Badge>
+                          {isHost && !flight.startedAt && !flight.completedAt && (
+                            <button
+                              className="h-6 w-6 rounded-full bg-red-100 text-red-600 hover:bg-red-200 flex items-center justify-center"
+                              title="Flight entfernen"
+                              onClick={() => deleteFlightMutation.mutate(flight.id)}
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div className="text-sm text-muted-foreground flex justify-between items-center px-6 pt-1">
                         <span>{flight.wines?.length || 0} Weine</span>
@@ -1000,18 +1003,20 @@ export default function TastingDetailPage() {
                       </div>
                     </CardHeader>
                     <CardContent className="pt-6">
-                      <FlightWineList flight={flight} />
+                      <FlightWineList flight={flight} isHost={isHost} />
 
                       {isHost && !allFlightsCompleted && (
                         <div className="flex gap-2 mt-4">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleAddWine(flight.id)}
-                            className="w-full"
-                          >
-                            Wein hinzufügen
-                          </Button>
+                          {!flight.startedAt && !flight.completedAt && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleAddWine(flight.id)}
+                              className="w-full"
+                            >
+                              Wein hinzufügen
+                            </Button>
+                          )}
                           {tasting.status === 'started' && !flight.startedAt && (
                             <Button
                               size="sm"
@@ -1034,7 +1039,7 @@ export default function TastingDetailPage() {
                               <Button
                                 size="sm"
                                 onClick={() => handleCompleteFlight(flight.id)}
-                                className="w-1/2 bg-blue-600 hover:bg-blue-700"
+                                className="w-1/2 bg-[#274E37] hover:bg-[#1E3E2B]"
                               >
                                 Flight abschließen
                               </Button>
@@ -1052,294 +1057,187 @@ export default function TastingDetailPage() {
               <p className="text-gray-500 italic mb-4">Keine Flights für diese Verkostung</p>
             </div>
           )}
-          {/* Dialog für Flight-Erstellung */}
-          <CreateFlightDialog
-            tastingId={tasting.id}
-            open={createFlightDialogOpen}
-            onOpenChange={setCreateFlightDialogOpen}
-          />
           {isHost && !allFlightsCompleted && (
             <div className="flex justify-center mt-6">
               <Button
                 className="bg-[#274E37] hover:bg-[#e65b2d]"
-                onClick={() => setCreateFlightDialogOpen(true)}
+                onClick={() => createFlightMutation.mutate()}
+                disabled={createFlightMutation.isPending}
               >
-                {flights && flights.length > 0 ? 'Weiteren Flight hinzufügen' : 'Flight erstellen'}
+                {createFlightMutation.isPending ? 'Erstelle…' : (flights && flights.length > 0 ? 'Weiteren Flight hinzufügen' : 'Flight erstellen')}
               </Button>
             </div>
           )}
         </TabsContent>
 
-        <TabsContent value="participants">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center">
-                  <Users className="h-5 w-5 mr-2 text-[#274E37]" />
-                  Teilnehmer
-                </CardTitle>
+        <TabsContent value="participants" className="space-y-6">
+          {(tasting.status === 'draft' || tasting.status === 'active') ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Teilnehmer verwalten</CardTitle>
                 <CardDescription>
-                  Teilnehmer dieser Verkostung und deren Punktestand
+                  Hier verwaltest du Einladungen und Teilnehmer dieser Verkostung.
                 </CardDescription>
-              </div>
-              {isHost && tasting.status !== 'completed' && (
-                <Badge variant="outline" className="ml-2">
-                  {/* Dies würde dynamisch sein */}
-                  3 Teilnehmer
-                </Badge>
-              )}
-            </CardHeader>
-            <CardContent>
-              {/* Mock-Daten für die UI-Vorschau */}
-              <div className="space-y-4">
-                {/* Teilnehmer-Liste */}
-                <div className="rounded-md border">
-                  <div className="bg-gray-50 p-3 flex justify-between items-center font-medium text-sm">
-                    <div className="flex items-center">
-                      <UserIcon className="h-4 w-4 mr-2 text-gray-500" />
-                      <span>Name</span>
+              </CardHeader>
+              <CardContent>
+                {isHost && (
+                  <div className="mb-6">
+                    <h4 className="font-medium mb-2 flex items-center gap-2">
+                      <Users className="h-4 w-4" /> Einladungen
+                    </h4>
+                    <div className="flex gap-2 mb-3">
+                      <Input
+                        placeholder="name@example.com"
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const email = inviteEmail.trim().toLowerCase();
+                            if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                              addInviteMutation.mutate(email);
+                            } else {
+                              toast({ title: 'Ungültige E-Mail', variant: 'destructive' });
+                            }
+                          }
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          const email = inviteEmail.trim().toLowerCase();
+                          if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                            addInviteMutation.mutate(email);
+                          } else {
+                            toast({ title: 'Ungültige E-Mail', variant: 'destructive' });
+                          }
+                        }}
+                        disabled={addInviteMutation.isPending}
+                      >
+                        Hinzufügen
+                      </Button>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <div className="flex items-center">
-                        <Trophy className="h-4 w-4 mr-2 text-gray-500" />
-                        <span>Punkte</span>
+                    {invites.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {invites.map((i) => (
+                          <span key={i.email} className="inline-flex items-center gap-2 bg-gray-100 text-gray-800 rounded-full px-3 py-1 text-sm">
+                            {i.email}
+                            <button
+                              type="button"
+                              className="text-gray-500 hover:text-gray-700"
+                              onClick={() => removeInviteMutation.mutate(i.email)}
+                              aria-label={`Entferne ${i.email}`}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
                       </div>
-                      {isHost && (
-                        <span className="text-gray-500">Entfernen</span>
-                      )}
-                    </div>
+                    ) : (
+                      <p className="text-sm text-gray-500">Noch keine Einladungen</p>
+                    )}
                   </div>
-                  <div className="divide-y">
-                    {[
-                      { id: 1, name: "Max Mustermann", company: "Weingut A", score: 18, profileImage: "https://i.pravatar.cc/150?img=1" },
-                      { id: 2, name: "Anna Schmidt", company: "Weinhandlung B", score: 15, profileImage: "https://i.pravatar.cc/150?img=5" },
-                      { id: 3, name: "Thomas Müller", company: "Privat", score: 12, profileImage: "https://i.pravatar.cc/150?img=8" }
-                    ].map((participant) => (
-                      <div key={participant.id} className="p-4 flex justify-between items-center">
-                        <div className="flex items-center">
-                          <div className="w-10 h-10 rounded-full overflow-hidden mr-3 flex-shrink-0">
-                            <img 
-                              src={participant.profileImage} 
-                              alt={`Profilbild von ${participant.name}`}
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-                          <div>
-                            <p className="font-medium">{participant.name}</p>
-                            <p className="text-sm text-gray-500">{participant.company}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-6">
-                          <div className="w-16 text-right">
-                            <span className="font-bold">{participant.score}</span>
-                            <span className="text-gray-500 text-sm ml-1">Pkt.</span>
+                )}
+
+                {isParticipantsLoading ? (
+                  <div className="flex justify-center p-6">
+                    <Loader2 className="h-6 w-6 animate-spin text-[#274E37]" />
+                  </div>
+                ) : participants && participants.length > 0 ? (
+                  <div className="space-y-3">
+                    {participants
+                      .filter(p => p.user?.id !== tasting.hostId)
+                      .map((p) => (
+                        <div key={p.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
+                          <div className="flex items-center gap-3">
+                            <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center">
+                              {p.user?.profileImage ? (
+                                <img src={p.user.profileImage} alt={p.user?.name || 'Avatar'} className="h-full w-full object-cover" />
+                              ) : (
+                                <span className="text-sm text-gray-600">{(p.user?.name || '?').slice(0,1)}</span>
+                              )}
+                            </div>
+                            <div>
+                              <div className="font-medium">{p.user?.name || 'Unbekannt'}</div>
+                              <div className="text-xs text-gray-500">{p.user?.company || '—'}</div>
+                            </div>
                           </div>
                           {isHost && (
-                            <Button variant="ghost" size="icon" className="text-red-500 hover:text-red-700" title="Teilnehmer entfernen">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-red-500 hover:bg-red-50 hover:text-red-600"
+                              onClick={() => handleRemoveParticipant(p.userId)}
+                              title="Teilnehmer entfernen"
+                            >
                               <X className="h-4 w-4" />
                             </Button>
                           )}
                         </div>
-                      </div>
-                    ))}
+                      ))}
                   </div>
-                </div>
-
-                {/* Hinweis, wenn keine Teilnehmer vorhanden sind */}
-                {false && (
-                  <p className="text-center text-gray-500 my-8">
-                    Keine Teilnehmer für diese Verkostung.
-                  </p>
-                )}
-                
-                {tasting.status === 'completed' && (
-                  <div className="bg-gray-50 p-4 rounded-md border">
-                    <h3 className="font-medium flex items-center">
-                      <Trophy className="h-5 w-5 mr-2 text-amber-500" />
-                      Endergebnis
-                    </h3>
-                    <p className="text-sm text-gray-500 mt-2">
-                      Die Verkostung ist abgeschlossen. Die endgültigen Platzierungen werden oben angezeigt.
-                    </p>
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    <UserIcon className="h-12 w-12 mx-auto mb-2 text-gray-300" />
+                    <p>Noch keine Teilnehmer beigetreten.</p>
                   </div>
                 )}
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>Teilnehmer‑Ranking</CardTitle>
+                <CardDescription>Gesamtpunktestand der Teilnehmer</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {participants && participants.length > 0 ? (
+                  [...participants]
+                    .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
+                    .map((p: any, idx: number) => {
+                      const rank = idx + 1;
+                      const badgeColor = rank === 1 ? 'bg-yellow-500' : rank === 2 ? 'bg-gray-400' : rank === 3 ? 'bg-amber-700' : 'bg-gray-300';
+                      const ptsColor = rank === 1 ? 'bg-yellow-500' : rank === 2 ? 'bg-gray-400' : rank === 3 ? 'bg-amber-700' : 'bg-gray-200';
+                      return (
+                        <div
+                          key={p.id}
+                          className="p-3 rounded-md border flex items-center justify-between hover:bg-gray-50 cursor-pointer"
+                          onClick={() => setParticipantDialog({ open: true, participant: p })}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="relative">
+                              <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center">
+                                {p.user?.profileImage ? (
+                                  <img src={p.user.profileImage} alt={p.user?.name || 'Avatar'} className="h-full w-full object-cover" />
+                                ) : (
+                                  <span className="text-sm text-gray-600">{(p.user?.name || '?').slice(0,1)}</span>
+                                )}
+                              </div>
+                              {rank <= 3 && (
+                                <span className={`absolute -bottom-1 -right-1 h-4 w-4 rounded-full border border-white ${badgeColor}`}></span>
+                              )}
+                            </div>
+                            <div>
+                              <div className="font-medium">{p.user?.name || 'Unbekannt'}</div>
+                              <div className="text-xs text-gray-500">{p.user?.company || '—'}</div>
+                            </div>
+                          </div>
+                          <div>
+                            <span className={`px-3 py-1 rounded-full text-white text-xs font-bold ${ptsColor}`}>{p.score ?? 0} Pkt</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                ) : (
+                  <div className="text-sm text-gray-500">Keine Teilnehmer</div>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
-        <TabsContent value="scoring">
-          <Card>
-            <CardHeader>
-              <CardTitle>Punktesystem</CardTitle>
-              <CardDescription>
-                Legen Sie fest, wie viele Punkte für korrekt identifizierte Weinmerkmale vergeben werden (0-5 Punkte)
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isHost ? (
-                <div className="space-y-6">
-                  <div className="space-y-6">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Produzent:</label>
-                        <div className="flex items-center space-x-2">
-                          {[0, 1, 2, 3, 4, 5].map((value) => (
-                            <button
-                              key={value}
-                              className={`w-10 h-10 rounded-full ${
-                                pointsConfiguration.producer === value 
-                                  ? 'bg-[#274E37] text-white' 
-                                  : 'bg-gray-100 hover:bg-gray-200'
-                              }`}
-                              onClick={() => handlePointsChange('producer', value)}
-                            >
-                              {value}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Name:</label>
-                        <div className="flex items-center space-x-2">
-                          {[0, 1, 2, 3, 4, 5].map((value) => (
-                            <button
-                              key={value}
-                              className={`w-10 h-10 rounded-full ${
-                                pointsConfiguration.name === value 
-                                  ? 'bg-[#274E37] text-white' 
-                                  : 'bg-gray-100 hover:bg-gray-200'
-                              }`}
-                              onClick={() => handlePointsChange('name', value)}
-                            >
-                              {value}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Jahrgang:</label>
-                        <div className="flex items-center space-x-2">
-                          {[0, 1, 2, 3, 4, 5].map((value) => (
-                            <button
-                              key={value}
-                              className={`w-10 h-10 rounded-full ${
-                                pointsConfiguration.vintage === value 
-                                  ? 'bg-[#274E37] text-white' 
-                                  : 'bg-gray-100 hover:bg-gray-200'
-                              }`}
-                              onClick={() => handlePointsChange('vintage', value)}
-                            >
-                              {value}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Land:</label>
-                        <div className="flex items-center space-x-2">
-                          {[0, 1, 2, 3, 4, 5].map((value) => (
-                            <button
-                              key={value}
-                              className={`w-10 h-10 rounded-full ${
-                                pointsConfiguration.country === value 
-                                  ? 'bg-[#274E37] text-white' 
-                                  : 'bg-gray-100 hover:bg-gray-200'
-                              }`}
-                              onClick={() => handlePointsChange('country', value)}
-                            >
-                              {value}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Region:</label>
-                        <div className="flex items-center space-x-2">
-                          {[0, 1, 2, 3, 4, 5].map((value) => (
-                            <button
-                              key={value}
-                              className={`w-10 h-10 rounded-full ${
-                                pointsConfiguration.region === value 
-                                  ? 'bg-[#274E37] text-white' 
-                                  : 'bg-gray-100 hover:bg-gray-200'
-                              }`}
-                              onClick={() => handlePointsChange('region', value)}
-                            >
-                              {value}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Rebsorten:</label>
-                        <div className="flex items-center space-x-2">
-                          {[0, 1, 2, 3, 4, 5].map((value) => (
-                            <button
-                              key={value}
-                              className={`w-10 h-10 rounded-full ${
-                                pointsConfiguration.varietals === value 
-                                  ? 'bg-[#274E37] text-white' 
-                                  : 'bg-gray-100 hover:bg-gray-200'
-                              }`}
-                              onClick={() => handleVarietalsChange(value)}
-                            >
-                              {value}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Rebsorten-Wertung:</label>
-                        <div className="flex flex-col gap-2">
-                          <button
-                            className={`px-4 py-2 rounded text-sm ${
-                              pointsConfiguration.varietalsMode === 'per' 
-                                ? 'bg-[#274E37] text-white' 
-                                : 'bg-gray-100 hover:bg-gray-200'
-                            }`}
-                            onClick={() => handleVarietalsModeChange('per')}
-                          >
-                            Punkte pro korrekte Rebsorte
-                          </button>
-                          <button
-                            className={`px-4 py-2 rounded text-sm ${
-                              pointsConfiguration.varietalsMode === 'all' 
-                                ? 'bg-[#274E37] text-white' 
-                                : 'bg-gray-100 hover:bg-gray-200'
-                            }`}
-                            onClick={() => handleVarietalsModeChange('all')}
-                          >
-                            Punkte nur wenn alle Rebsorten korrekt
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="pt-4 border-t">
-                      <div className="text-lg font-medium">Maximale Punktzahl pro Wein: {
-                        Object.entries(pointsConfiguration)
-                          .filter(([key]) => key !== 'varietalsMode')
-                          .map(([_, value]) => typeof value === 'number' ? value : 0)
-                          .reduce((sum, value) => sum + value, 0)
-                      }</div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-center text-gray-500 my-8">
-                  Punktesystem wird vom Host festgelegt.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+        {/* Scoring-Tab entfernt – Scoring ist in Einstellungen integriert */}
 
         {isHost && (
           <TabsContent value="settings">
@@ -1352,6 +1250,77 @@ export default function TastingDetailPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-6">
+                  {/* Punktesystem (aus ehemaligem Tab) */}
+                  <div>
+                    <h3 className="text-lg font-medium mb-2">Punktesystem</h3>
+                    <p className="text-sm text-gray-500 mb-4">Legen Sie fest, wie viele Punkte für korrekt identifizierte Weinmerkmale vergeben werden (0-5 Punkte)</p>
+                    {isHost ? (
+                      <div className="space-y-6">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Produzent:</label>
+                            <div className="flex items-center space-x-2">
+                              {[0, 1, 2, 3, 4, 5].map((value) => (
+                                <button key={value} className={`w-10 h-10 rounded-full ${pointsConfiguration.producer === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handlePointsChange('producer', value)}>{value}</button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Name:</label>
+                            <div className="flex items-center space-x-2">
+                              {[0, 1, 2, 3, 4, 5].map((value) => (
+                                <button key={value} className={`w-10 h-10 rounded-full ${pointsConfiguration.name === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handlePointsChange('name', value)}>{value}</button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Jahrgang:</label>
+                            <div className="flex items-center space-x-2">
+                              {[0, 1, 2, 3, 4, 5].map((value) => (
+                                <button key={value} className={`w-10 h-10 rounded-full ${pointsConfiguration.vintage === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handlePointsChange('vintage', value)}>{value}</button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Land:</label>
+                            <div className="flex items-center space-x-2">
+                              {[0, 1, 2, 3, 4, 5].map((value) => (
+                                <button key={value} className={`w-10 h-10 rounded-full ${pointsConfiguration.country === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handlePointsChange('country', value)}>{value}</button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Region:</label>
+                            <div className="flex items-center space-x-2">
+                              {[0, 1, 2, 3, 4, 5].map((value) => (
+                                <button key={value} className={`w-10 h-10 rounded-full ${pointsConfiguration.region === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handlePointsChange('region', value)}>{value}</button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Rebsorten:</label>
+                            <div className="flex items-center space-x-2">
+                              {[0, 1, 2, 3, 4, 5].map((value) => (
+                                <button key={value} className={`w-10 h-10 rounded-full ${pointsConfiguration.varietals === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handleVarietalsChange(value)}>{value}</button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Rebsorten‑Wertung:</label>
+                            <div className="flex flex-col gap-2">
+                              <button className={`px-4 py-2 rounded text-sm ${pointsConfiguration.varietalsMode === 'per' ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handleVarietalsModeChange('per')}>Punkte pro korrekte Rebsorte</button>
+                              <button className={`px-4 py-2 rounded text-sm ${pointsConfiguration.varietalsMode === 'all' ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handleVarietalsModeChange('all')}>Punkte nur wenn alle Rebsorten korrekt</button>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="pt-4 border-t">
+                          <div className="text-lg font-medium">Maximale Punktzahl pro Wein: {Object.entries(pointsConfiguration).filter(([k]) => k !== 'varietalsMode').map(([_, v]) => typeof v === 'number' ? v : 0).reduce((s, v) => s + v, 0)}</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500">Punktesystem wird vom Host festgelegt.</p>
+                    )}
+                  </div>
                   <div>
                     <h3 className="text-lg font-medium mb-2">Leaderboard-Anzeige</h3>
                     <p className="text-sm text-gray-500 mb-4">
@@ -1484,6 +1453,46 @@ export default function TastingDetailPage() {
           />
         </>
       )}
+
+      {/* Teilnehmer-Detail-Dialog: Weine vs. Tipps */}
+      <Dialog open={participantDialog.open} onOpenChange={(o) => setParticipantDialog(s => ({ ...s, open: o }))}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Tipps von {participantDialog.participant?.user?.name || participantDialog.participant?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 max-h-[70vh] overflow-auto pr-1">
+            {flights?.flatMap((f, idx) => (f.wines || []).map((w: any) => ({ ...w, flightIndex: idx + 1 }))).map((wine: any) => {
+              const g = participantGuesses?.find((x: any) => x.wineId === wine.id);
+              return (
+                <div key={wine.id} className="p-3 rounded border bg-gray-50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <span className="h-7 w-7 mr-2 flex items-center justify-center rounded-full bg-[#274E37] text-white">
+                        {wine.letterCode}
+                      </span>
+                      <div>
+                        <div className="font-medium">{wine.producer} {wine.name}</div>
+                        <div className="text-xs text-gray-600">{wine.region}, {wine.country}, {wine.vintage}</div>
+                      </div>
+                    </div>
+                    <Badge className="bg-[#274E37]">{g?.score ?? 0} Pkt</Badge>
+                  </div>
+                  <div className="mt-2 text-sm text-gray-700">
+                    <div className="font-medium">Tipp des Teilnehmers</div>
+                    {g ? (
+                      <div className="text-xs">
+                        {g.country || '-'}, {g.region || '-'}, {g.producer || '-'}, {g.name || '-'}, {g.vintage || '-'}{g.varietals && g.varietals.length ? `, ${g.varietals.join(', ')}` : ''}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-gray-500">Kein Tipp abgegeben</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
