@@ -99,6 +99,7 @@ export const flights = pgTable("flights", {
   timeLimit: integer("time_limit").default(600).notNull(), // in seconds
   startedAt: timestamp("started_at"),
   completedAt: timestamp("completed_at"),
+  reviewApprovedAt: timestamp("review_approved_at"),
 });
 
 export const insertFlightSchema = createInsertSchema(flights).pick({
@@ -180,6 +181,10 @@ export const guesses = pgTable("guesses", {
   notes: text("notes"),
   score: integer("score").default(0).notNull(),
   submittedAt: timestamp("submitted_at").defaultNow().notNull(),
+  overrideScore: integer("override_score"),
+  overrideBy: integer("override_by"),
+  overrideReason: text("override_reason"),
+  overrideFlags: json("override_flags"),
 });
 
 export const insertGuessSchema = createInsertSchema(guesses).pick({

@@ -25,6 +25,7 @@ type ScoringRule = {
   vintage: number;
   varietals: number;
   displayCount?: number | null;
+  anyVarietalPoint?: boolean;
 };
 
 export default function FinalResults() {
@@ -101,6 +102,7 @@ export default function FinalResults() {
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
     staleTime: 0,
+    refetchInterval: 2000,
   });
 
   // Sofort aktualisieren, wenn Server Scores pusht
@@ -115,14 +117,24 @@ export default function FinalResults() {
           queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/participants`] });
           queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
           queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/scoring`] });
-          if (myParticipant) {
-            queryClient.invalidateQueries({ queryKey: [`/api/participants/${myParticipant.id}/guesses`] });
-          }
+          queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/participant/self`] });
+          // Invalidate all participant guesses queries to be safe (works across tabs/windows)
+          queryClient.invalidateQueries({ predicate: (q) => {
+            const k = q.queryKey as any;
+            const s = Array.isArray(k) ? k.join('|') : String(k);
+            return s.includes('/api/participants/') && s.includes('/guesses');
+          }});
+          // Proaktiv alle aktiven Guess-Queries refetchen
+          queryClient.refetchQueries({ predicate: (q) => {
+            const k = q.queryKey as any;
+            const s = Array.isArray(k) ? k.join('|') : String(k);
+            return s.includes('/api/participants/') && s.includes('/guesses');
+          }});
         }
       } catch {}
     };
     return () => { try { ws.close(); } catch {} };
-  }, [tastingId, myParticipant]);
+  }, [tastingId]);
 
   return (
     <div className="container mx-auto py-10 px-4 max-w-5xl space-y-8">
@@ -152,33 +164,117 @@ export default function FinalResults() {
         <CardHeader>
           <CardTitle className="text-xl">Ihre Tipps je Wein</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
-          {flights?.flatMap((f, idx) => (f.wines || []).map((w: any) => ({...w, flightIndex: idx+1})))?.map((wine: any) => {
-            const g = myGuesses?.find(x => x.wineId === wine.id);
-            return (
-              <div key={wine.id} className="p-3 rounded border bg-gray-50">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <span className="h-7 w-7 mr-2 flex items-center justify-center rounded-full bg-[#274E37] text-white">
-                      {wine.letterCode}
-                    </span>
-                    <div>
-                      <div className="font-medium">{wine.producer} {wine.name}</div>
-                      <div className="text-sm text-gray-600">{wine.region}, {wine.country}, {wine.vintage}</div>
+        <CardContent className="space-y-5">
+          {flights?.map((f) => (
+            <div key={f.id}>
+              <h3 className="text-base font-semibold text-gray-800 mb-2">{f.name}</h3>
+              <div className="space-y-3">
+                {(f.wines || []).map((wine: any) => {
+                  const g = myGuesses?.find(x => x.wineId === wine.id);
+                  const r = scoring || { country: 0, region: 0, producer: 0, wineName: 0, vintage: 0, varietals: 0, anyVarietalPoint: true } as ScoringRule;
+                  const norm = (s?: string | null) => (s ?? '').toString().trim().toLowerCase();
+                  const eqTxt = (a?: string | null, b?: string | null) => norm(a) === norm(b);
+                  const eqVintage = (a?: string | null, b?: string | null) => {
+                    const aa = (a ?? '').toString().trim();
+                    const bb = (b ?? '').toString().trim();
+                    return aa === bb || Number(aa) === Number(bb);
+                  };
+                  let varietalMatches: boolean[] = [];
+                  let baseFields = { country: false, region: false, producer: false, name: false, vintage: false, varietals: false } as any;
+                  if (g) {
+                    baseFields = {
+                      country: !!(g.country && r.country > 0 && eqTxt(wine.country, g.country)),
+                      region: !!(g.region && r.region > 0 && eqTxt(wine.region, g.region)),
+                      producer: !!(g.producer && r.producer > 0 && eqTxt(wine.producer, g.producer)),
+                      name: !!(g.name && r.wineName > 0 && eqTxt(wine.name, g.name)),
+                      vintage: !!(g.vintage && r.vintage > 0 && eqVintage(wine.vintage, g.vintage)),
+                      varietals: false,
+                    };
+                    const wineVars = (wine.varietals || []).map((v: string) => v.toLowerCase());
+                    const guessVars = (g.varietals || []).map((v: string) => v.toLowerCase());
+                    varietalMatches = guessVars.map(v => wineVars.includes(v));
+                    if (r.varietals > 0) {
+                      if (r.anyVarietalPoint) {
+                        baseFields.varietals = varietalMatches.some(Boolean);
+                      } else {
+                        const gw = guessVars.slice().sort();
+                        const ww = wineVars.slice().sort();
+                        baseFields.varietals = gw.length === ww.length && gw.every((v, i) => v === ww[i]);
+                      }
+                    }
+                  }
+                  // apply override flags if present
+                  const flags = (g as any)?.overrideFlags || {};
+                  const add: string[] = flags.add || [];
+                  const remove: string[] = flags.remove || [];
+                  const varietalAdd: string[] = flags.varietalAdd || [];
+                  const varietalRemove: string[] = flags.varietalRemove || [];
+                  const isActive = (key: 'country'|'region'|'producer'|'name'|'vintage'|'varietals') => {
+                    const base = !!(baseFields as any)[key];
+                    if (remove.includes(key)) return false;
+                    if (add.includes(key)) return true;
+                    return base;
+                  };
+                  const varietalActive = (index: number, label: string) => {
+                    const base = !!(varietalMatches[index]);
+                    if (varietalRemove.includes(label)) return false;
+                    if (varietalAdd.includes(label)) return true;
+                    return base;
+                  };
+                  return (
+                    <div key={wine.id} className="p-3 rounded border bg-gray-50">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                          <span className="h-7 w-7 mr-2 flex items-center justify-center rounded-full bg-[#274E37] text-white">
+                            {wine.letterCode}
+                          </span>
+                          <div>
+                            <div className="font-medium">{wine.producer} {wine.name}</div>
+                            <div className="text-sm text-gray-600">{wine.region}, {wine.country}, {wine.vintage}</div>
+                          </div>
+                        </div>
+                        <Badge className="bg-[#274E37]">{g?.score ?? 0} Pkt</Badge>
+                      </div>
+                      {g ? (
+                        <div className="mt-2 text-sm">
+                          <div className="font-medium mb-1">Ihr Tipp</div>
+                          <div className="flex flex-wrap">
+                            {['country','region','producer','name','vintage'].map((k) => {
+                              const key = k as 'country'|'region'|'producer'|'name'|'vintage';
+                              const label = (g as any)[key] || '-';
+                              const ok = isActive(key);
+                              return (
+                                <span key={k} className={`text-xs mr-2 mb-2 inline-flex items-center px-2 py-1 rounded border ${ok ? 'bg-green-100 border-green-300 text-green-800' : 'bg-orange-100 border-orange-300 text-orange-800'}`}>
+                                  {label}
+                                </span>
+                              );
+                            })}
+                            {r?.anyVarietalPoint
+                              ? ((g.varietals || []).map((v: string, i: number) => {
+                                  const ok = varietalActive(i, v);
+                                  return (
+                                    <span key={v+String(i)} className={`text-xs mr-2 mb-2 inline-flex items-center px-2 py-1 rounded border ${ok ? 'bg-green-100 border-green-300 text-green-800' : 'bg-orange-100 border-orange-300 text-orange-800'}`}>
+                                      {v}
+                                    </span>
+                                  );
+                                }))
+                              : (
+                                <span className={`text-xs mr-2 mb-2 inline-flex items-center px-2 py-1 rounded border ${isActive('varietals') ? 'bg-green-100 border-green-300 text-green-800' : 'bg-orange-100 border-orange-300 text-orange-800'}`}>
+                                  {g.varietals && g.varietals.length ? g.varietals.join(', ') : '-'}
+                                </span>
+                              )
+                            }
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-2 text-sm text-gray-500">Kein Tipp abgegeben</div>
+                      )}
                     </div>
-                  </div>
-                  <Badge className="bg-[#274E37]">{g?.score ?? 0} Pkt</Badge>
-                </div>
-                {g ? (
-                  <div className="mt-2 text-sm text-gray-700">
-                    <div>Ihr Tipp: {g.country || '-'}, {g.region || '-'}, {g.producer || '-'}, {g.name || '-'}, {g.vintage || '-'}{g.varietals ? `, ${g.varietals.join(', ')}` : ''}</div>
-                  </div>
-                ) : (
-                  <div className="mt-2 text-sm text-gray-500">Kein Tipp abgegeben</div>
-                )}
+                  );
+                })}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </CardContent>
       </Card>
 

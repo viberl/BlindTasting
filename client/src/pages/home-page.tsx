@@ -400,9 +400,9 @@ export default function HomePage() {
               >
                 <Wine className="h-4 w-4 flex-shrink-0" />
                 <span className="truncate">Meine</span>
-                {myTastings.length > 0 && (
+                {myTastings.filter(t => (t.status || '').toLowerCase() !== 'completed').length > 0 && (
                   <span className="ml-1 min-w-[20px] h-5 flex items-center justify-center px-1.5 py-0.5 rounded-full bg-vinaturel-original text-white text-xs font-medium">
-                    {myTastings.length}
+                    {myTastings.filter(t => (t.status || '').toLowerCase() !== 'completed').length}
                   </span>
                 )}
               </TabsTrigger>
@@ -470,16 +470,18 @@ export default function HomePage() {
         <TabsContent value="myTastings" className="space-y-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <h2 className="text-2xl font-bold text-gray-900">Meine Verkostungen</h2>
-            {myTastings.length > 0 && (
+            {myTastings.filter(t => (t.status || '').toLowerCase() !== 'completed').length > 0 && (
               <p className="text-sm text-gray-500">
-                {myTastings.length} Verkostung{myTastings.length !== 1 ? 'en' : ''} gefunden
+                {myTastings.filter(t => (t.status || '').toLowerCase() !== 'completed').length} Verkostung{myTastings.filter(t => (t.status || '').toLowerCase() !== 'completed').length !== 1 ? 'en' : ''} gefunden
               </p>
             )}
           </div>
           
-          {myTastings.length > 0 ? (
+          {myTastings.filter(t => (t.status || '').toLowerCase() !== 'completed').length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {myTastings.map((tasting, index) => renderTastingCard(tasting, 'myTastings', index))}
+              {myTastings
+                .filter(t => (t.status || '').toLowerCase() !== 'completed')
+                .map((tasting, index) => renderTastingCard(tasting, 'myTastings', index))}
             </div>
           ) : (
             <div className="bg-white rounded-xl border-2 border-dashed border-gray-200 p-8 text-center">

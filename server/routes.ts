@@ -766,12 +766,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     if (guess.name && eqTxt(wine.name, guess.name)) s += rules.wineName;
                     if (guess.vintage && eqVintage(wine.vintage, guess.vintage)) s += rules.vintage;
                     if (guess.varietals && guess.varietals.length > 0 && rules.varietals > 0) {
+                      const gw = guess.varietals.map(v => v.toLowerCase());
+                      const ww = wine.varietals.map(v => v.toLowerCase());
                       if (rules.anyVarietalPoint) {
-                        if (guess.varietals.some(v => wine.varietals.map(x => x.toLowerCase()).includes(v.toLowerCase()))) s += rules.varietals;
+                        const matched = gw.filter(v => ww.includes(v)).length;
+                        s += matched * rules.varietals;
                       } else {
-                        const gw = guess.varietals.map(v => v.toLowerCase()).sort();
-                        const ww = wine.varietals.map(v => v.toLowerCase()).sort();
-                        if (gw.length === ww.length && gw.every((v, i) => v === ww[i])) s += rules.varietals;
+                        const gws = gw.slice().sort();
+                        const wws = ww.slice().sort();
+                        if (gws.length === wws.length && gws.every((v, i) => v === wws[i])) s += rules.varietals;
                       }
                     }
                     await storage.updateGuessScore(guess.id, s);
@@ -933,16 +936,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
               
               // Varietals scoring
               if (guess.varietals && guess.varietals.length > 0 && scoringRules.varietals > 0) {
+                const gw = guess.varietals.map(v => v.toLowerCase());
+                const ww = wine.varietals.map(v => v.toLowerCase());
                 if (scoringRules.anyVarietalPoint) {
-                  // Award points if any varietal is correct
-                  if (guess.varietals.some(v => wine.varietals.includes(v))) {
-                    guessScore += scoringRules.varietals;
-                  }
+                  // Punkte pro korrekte Rebsorte
+                  const matched = gw.filter(v => ww.includes(v)).length;
+                  guessScore += matched * scoringRules.varietals;
                 } else {
-                  // Award points only if all varietals match exactly
+                  // Punkte nur wenn alle Rebsorten korrekt
                   if (
-                    guess.varietals.length === wine.varietals.length &&
-                    guess.varietals.every(v => wine.varietals.includes(v))
+                    gw.length === ww.length &&
+                    gw.slice().sort().every((v, i) => v === ww.slice().sort()[i])
                   ) {
                     guessScore += scoringRules.varietals;
                   }
@@ -1124,6 +1128,148 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json({ ok: true });
     } catch (e) {
       return res.status(500).json({ error: 'Server error' });
+    }
+  });
+
+  // Host review data for a flight
+  app.get('/api/flights/:id/review', ensureAuthenticated, async (req, res) => {
+    try {
+      const flightId = parseInt(req.params.id, 10);
+      const flRows = await db.select().from(flights).where(eq(flights.id, flightId)).limit(1);
+      const fl = flRows[0];
+      if (!fl) return res.status(404).json({ error: 'Flight not found' });
+      const tasting = await storage.getTasting(fl.tastingId);
+      if (!tasting) return res.status(404).json({ error: 'Tasting not found' });
+      if (tasting.hostId !== req.user!.id) return res.status(403).json({ error: 'Only the host can review guesses' });
+      const wineRows = await db.select().from(wines).where(eq(wines.flightId, flightId));
+      const participants = await storage.getParticipantsByTasting(tasting.id);
+      // Pull all guesses for wines of this flight
+      const wineIds = wineRows.map(w => w.id);
+      const guessesRes = wineIds.length ? await db.execute(sql`
+        SELECT g.*, p.user_id as "userId", p.id as "participantId"
+        FROM guesses g
+        JOIN participants p ON p.id = g.participant_id
+        WHERE g.wine_id = ANY(ARRAY[${sql.join(wineIds, sql`, `)}]::int4[])
+      `) : { rows: [] };
+      const guesses = (guessesRes.rows as any[]) || [];
+      // Group by wine
+      const grouped = wineRows.map(w => ({
+        wine: w,
+        guesses: guesses.filter(g => (g as any).wine_id === w.id).map(g => ({
+          ...g,
+          autoScore: (g as any).score - (((g as any).override_score ?? 0)),
+        }))
+      }));
+      res.json({ flight: { id: fl.id, reviewApprovedAt: (fl as any).reviewApprovedAt || null }, wines: grouped, participants });
+    } catch (e) {
+      console.error('Error in /api/flights/:id/review:', e);
+      res.status(500).json({ error: 'Server error' });
+    }
+  });
+
+  // Override a single guess (host only) – set overrideScore or flags/reason
+  app.patch('/api/guesses/:id/override', ensureAuthenticated, async (req, res) => {
+    try {
+      const guessId = parseInt(req.params.id, 10);
+      const body = req.body || {};
+      // Load guess, wine, flight, tasting
+      const guessRes = await db.execute(sql`SELECT * FROM guesses WHERE id = ${guessId} LIMIT 1`);
+      const guess = (guessRes.rows as any[])[0];
+      if (!guess) return res.status(404).json({ error: 'Guess not found' });
+      const wineRes = await db.execute(sql`SELECT * FROM wines WHERE id = ${(guess as any).wine_id} LIMIT 1`);
+      const wine = (wineRes.rows as any[])[0];
+      if (!wine) return res.status(404).json({ error: 'Wine not found' });
+      const flightRes = await db.execute(sql`SELECT * FROM flights WHERE id = ${(wine as any).flight_id} LIMIT 1`);
+      const fl = (flightRes.rows as any[])[0];
+      if (!fl) return res.status(404).json({ error: 'Flight not found' });
+      const tasting = await storage.getTasting((fl as any).tasting_id);
+      if (!tasting) return res.status(404).json({ error: 'Tasting not found' });
+      if (tasting.hostId !== req.user!.id) return res.status(403).json({ error: 'Only the host can override guesses' });
+
+      // Compute base score fresh using current scoring rules
+      const rules = await storage.getScoringRule((tasting as any).id);
+      const eqTxt = (a?: string | null, b?: string | null) =>
+        (a ?? '').toString().trim().toLowerCase() === (b ?? '').toString().trim().toLowerCase();
+      const eqVintage = (a?: string | null, b?: string | null) => {
+        const aa = (a ?? '').toString().trim();
+        const bb = (b ?? '').toString().trim();
+        return aa === bb || Number(aa) === Number(bb);
+      };
+      let base = 0;
+      if (rules) {
+        if ((guess as any).country && eqTxt((wine as any).country, (guess as any).country)) base += rules.country;
+        if ((guess as any).region && eqTxt((wine as any).region, (guess as any).region)) base += rules.region;
+        if ((guess as any).producer && eqTxt((wine as any).producer, (guess as any).producer)) base += rules.producer;
+        if ((guess as any).name && eqTxt((wine as any).name, (guess as any).name)) base += rules.wineName;
+        if ((guess as any).vintage && eqVintage((wine as any).vintage, (guess as any).vintage)) base += rules.vintage;
+        if (rules.varietals && rules.varietals > 0) {
+          const gw = ((guess as any).varietals || []).map((v: string) => v.toLowerCase());
+          const ww = ((wine as any).varietals || []).map((v: string) => v.toLowerCase());
+          if (rules.anyVarietalPoint) {
+            const matched = gw.filter((v: string) => ww.includes(v)).length;
+            base += matched * rules.varietals;
+          } else {
+            const gws = gw.slice().sort();
+            const wws = ww.slice().sort();
+            if (gws.length === wws.length && gws.every((v: string, i: number) => v === wws[i])) base += rules.varietals;
+          }
+        }
+      }
+      const prevOverride = (guess as any).override_score ?? 0;
+      const newOverride = typeof body.overrideScore === 'number' ? body.overrideScore : prevOverride;
+      const newScore = base + newOverride;
+      const delta = newScore - (guess as any).score;
+
+      await db.execute(sql`
+        UPDATE guesses
+        SET override_score = ${newOverride}, override_by = ${req.user!.id}, override_reason = ${body.overrideReason ?? null}, override_flags = ${body.overrideFlags ?? null}, score = ${newScore}
+        WHERE id = ${guessId}
+      `);
+
+      // update participant score by delta
+      await db.execute(sql`
+        UPDATE participants SET score = COALESCE(score,0) + ${delta} WHERE id = ${(guess as any).participant_id}
+      `);
+
+      // Broadcast score update to all clients of this tasting
+      try {
+        if (joinRooms.has(tasting.id)) {
+          const payloadScores = JSON.stringify({ type: 'scores_updated', tastingId: tasting.id, flightId: (wine as any).flight_id });
+          for (const client of joinRooms.get(tasting.id) || []) {
+            if ((client as any).readyState === 1) { try { (client as any).send(payloadScores); } catch {}
+            }
+          }
+        }
+      } catch {}
+
+      res.json({ ok: true, newScore, delta });
+    } catch (e) {
+      res.status(500).json({ error: 'Server error' });
+    }
+  });
+
+  // Approve review for a flight
+  app.post('/api/flights/:id/review/approve', ensureAuthenticated, async (req, res) => {
+    try {
+      const flightId = parseInt(req.params.id, 10);
+      const flRows = await db.select().from(flights).where(eq(flights.id, flightId)).limit(1);
+      const fl = flRows[0];
+      if (!fl) return res.status(404).json({ error: 'Flight not found' });
+      const tasting = await storage.getTasting(fl.tastingId);
+      if (!tasting) return res.status(404).json({ error: 'Tasting not found' });
+      if (tasting.hostId !== req.user!.id) return res.status(403).json({ error: 'Only the host can approve review' });
+      const now = new Date();
+      await db.execute(sql`UPDATE flights SET review_approved_at = ${now} WHERE id = ${flightId}`);
+      // Broadcast scores_updated for immediate refresh
+      if (joinRooms.has(tasting.id)) {
+        const payloadScores = JSON.stringify({ type: 'scores_updated', tastingId: tasting.id, flightId });
+        for (const client of joinRooms.get(tasting.id) || []) {
+          if (client.readyState === 1) { try { client.send(payloadScores); } catch {} }
+        }
+      }
+      res.json({ ok: true, reviewApprovedAt: now });
+    } catch (e) {
+      res.status(500).json({ error: 'Server error' });
     }
   });
 
@@ -1524,68 +1670,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Guess stats per wine for a flight (host view)
+  // Guess stats per wine for a flight (host view) – robust against partial data
   app.get('/api/flights/:id/guess-stats', ensureAuthenticated, async (req, res) => {
     try {
       const flightId = parseInt(req.params.id, 10);
       if (isNaN(flightId)) return res.status(400).json({ error: 'Invalid flight id' });
 
-      // Fetch flight and tasting
-      const flightRows = await db
-        .select()
-        .from(flights)
-        .where(eq(flights.id, flightId))
-        .limit(1);
-      const flight = flightRows[0];
-      if (!flight) return res.status(404).json({ error: 'Flight not found' });
-
-      const tasting = await storage.getTasting(flight.tastingId);
+      const [flightRow] = await db.select().from(flights).where(eq(flights.id, flightId)).limit(1);
+      if (!flightRow) return res.status(404).json({ error: 'Flight not found' });
+      const tasting = await storage.getTasting(flightRow.tastingId);
       if (!tasting) return res.status(404).json({ error: 'Tasting not found' });
+      if (req.user?.id !== tasting.hostId) return res.status(403).json({ error: 'Only the host can view guess stats' });
 
-      // Only host can see stats
-      if (req.user?.id !== tasting.hostId) {
-        return res.status(403).json({ error: 'Only the host can view guess stats' });
+      const wineRows = await db.select().from(wines).where(eq(wines.flightId, flightId));
+      if (!wineRows || wineRows.length === 0) {
+        return res.json({ flightId, tastingId: tasting.id, stats: [] });
       }
 
-      // Fetch wines in flight
-      const wineRows = await db.select().from(wines).where(eq(wines.flightId, flightId));
-
-      // Total participants for the tasting
       const totalParticipantsRes = await db.execute(sql`SELECT COUNT(*)::int AS cnt FROM participants WHERE tasting_id = ${tasting.id}`);
       const totalParticipants = (totalParticipantsRes.rows?.[0] as any)?.cnt ?? 0;
 
-      // Count guesses per wine using left joins to include zero counts
+      // Safer count per wine
       const countsRes = await db.execute(sql`
         SELECT w.id as "wineId", w.letter_code as "letterCode",
-               COUNT(DISTINCT g.participant_id)::int AS "submitted"
+               COALESCE(COUNT(DISTINCT g.participant_id),0)::int AS "submitted"
         FROM wines w
         LEFT JOIN guesses g ON g.wine_id = w.id
-        LEFT JOIN participants p ON p.id = g.participant_id AND p.tasting_id = ${tasting.id}
         WHERE w.flight_id = ${flightId}
         GROUP BY w.id, w.letter_code
         ORDER BY w.id
       `);
 
       const countsMap = new Map<number, { submitted: number; letterCode: string }>();
-      for (const row of countsRes.rows as any[]) countsMap.set(row.wineId, { submitted: row.submitted, letterCode: row.letterCode });
+      for (const row of (countsRes.rows as any[]) || []) countsMap.set(row.wineId, { submitted: row.submitted, letterCode: row.letterCode });
 
       const stats = wineRows.map(w => {
         const row = countsMap.get(w.id);
         const submitted = row?.submitted ?? 0;
         const letterCode = row?.letterCode ?? (w as any).letterCode;
-        return {
-          wineId: w.id,
-          letterCode,
-          submitted,
-          total: totalParticipants,
-          missing: Math.max(totalParticipants - submitted, 0)
-        };
+        return { wineId: w.id, letterCode, submitted, total: totalParticipants, missing: Math.max(totalParticipants - submitted, 0) };
       });
 
       return res.json({ flightId, tastingId: tasting.id, stats });
     } catch (error) {
       console.error('Error fetching guess stats:', error);
-      return res.status(500).json({ error: 'Server error' });
+      // Return empty stats instead of 500 to not block UI
+      try {
+        const flightId = parseInt(req.params.id, 10);
+        const [flightRow] = await db.select().from(flights).where(eq(flights.id, flightId)).limit(1);
+        const tastingId = flightRow ? flightRow.tastingId : null;
+        return res.json({ flightId, tastingId, stats: [] });
+      } catch {
+        return res.json({ flightId: null, tastingId: null, stats: [] });
+      }
     }
   });
 

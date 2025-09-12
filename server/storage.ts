@@ -1221,7 +1221,30 @@ export class DatabaseStorage implements IStorage {
         };
       }));
 
-      // 2. Get tastings where user is invited
+      // 2. Get tastings where user participated (participants table)
+      // Use a robust raw SQL join to avoid inArray() with subquery limitations
+      const participatingRows = await db.execute(sql`
+        SELECT 
+          t.id, t.name, t.host_id AS "hostId", t.is_public AS "isPublic",
+          t.password AS "tastingPassword", t.created_at AS "createdAt",
+          t.completed_at AS "completedAt", t.status,
+          (t.password IS NOT NULL) AS "requiresPassword",
+          u.name AS "hostName", u.company AS "hostCompany"
+        FROM tastings t
+        JOIN participants p ON p.tasting_id = t.id
+        LEFT JOIN users u ON u.id = t.host_id
+        WHERE p.user_id = ${userId}
+      `);
+
+      const participatingTastings: TastingWithHost[] = (participatingRows.rows as any[]).map((t) => ({
+        ...t,
+        hostName: (t.hostName || '').trim(),
+        hostCompany: t.hostCompany || null,
+        requiresPassword: !!t.requiresPassword,
+        password: (t as any).tastingPassword ?? null,
+      }));
+
+      // 3. Get tastings where user is invited
       const inviteResults = await db.execute<{ tastingId: number }>(sql`SELECT tasting_id as "tastingId" FROM tasting_invitees WHERE email = ${userEmail}`);
 
       const inviteeTastingIds = inviteResults.rows.map(t => t.tastingId);
@@ -1299,7 +1322,7 @@ export class DatabaseStorage implements IStorage {
       // The requiresPassword field is already set in the query
 
       // Combine all tastings and remove duplicates
-      const allTastings = [...hostedTastings, ...invitedTastings, ...publicTastings];
+      const allTastings = [...hostedTastings, ...invitedTastings, ...publicTastings, ...participatingTastings];
       const uniqueTastings = Array.from(new Map(allTastings.map(t => [t.id, t])).values());
 
       // Get all unique host IDs
@@ -1427,15 +1450,17 @@ export class DatabaseStorage implements IStorage {
       // Build result arrays preserving host info
       const hostedIds = new Set(hostedTastings.map(t => t.id));
       const invitedIds = new Set(invitedTastings.map(t => t.id));
+      const participatingIdsSet = new Set(participatingTastings.map(t => t.id));
       const publicIds  = new Set(publicTastings.map(t => t.id));
 
       const hostedOut = tastingsWithHosts.filter(t => hostedIds.has(t.id));
       const invitedOut = tastingsWithHosts.filter(t => invitedIds.has(t.id));
+      const participatingOut = tastingsWithHosts.filter(t => participatingIdsSet.has(t.id));
       const availableOut = tastingsWithHosts.filter(t => publicIds.has(t.id));
 
       return {
         hosted: hostedOut,
-        participating: invitedOut, // historical naming kept
+        participating: participatingOut,
         available: availableOut,
         invited: invitedOut,
       };

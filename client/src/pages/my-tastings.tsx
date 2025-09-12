@@ -20,21 +20,27 @@ export default function MyTastingsPage() {
   const { user } = useAuth();
   const [, navigate] = useLocation();
 
-  const { data, isLoading } = useQuery<{ hosted: Tasting[]; participating: Tasting[] }>({
+  const { data, isLoading } = useQuery<{ hosted: Tasting[]; participating: Tasting[]; invited?: Tasting[] }>({
     queryKey: ['/api/tastings','mine'],
     queryFn: async () => {
       const res = await apiRequest('GET', '/api/tastings');
       if (!res.ok) throw new Error('Fehler beim Laden');
       const json = await res.json();
-      return { hosted: json.hosted || [], participating: json.participating || [] };
+      return { hosted: json.hosted || [], participating: json.participating || [], invited: json.invited || [] };
     },
     enabled: !!user,
   });
 
   if (isLoading) return <div className="container mx-auto p-6">Lade…</div>;
 
+  // Zeige im Tab "Teilgenommen" alle Tastings, an denen der User teilgenommen hat – unabhängig vom Status
   const hostedCompleted = (data?.hosted || []).filter(t => (t.status || '').toLowerCase() === 'completed');
-  const participatedCompleted = (data?.participating || []).filter(t => (t.status || '').toLowerCase() === 'completed');
+  // Fallback: falls participating serverseitig leer ist, ergänze eingeladene Tastings
+  const participatedAllRaw = [
+    ...(data?.participating || []),
+    ...(data?.invited || []),
+  ];
+  const participatedAll = Array.from(new Map(participatedAllRaw.map(t => [t.id, t])).values());
 
   const renderCard = (t: Tasting, isHost: boolean) => (
     <Card key={t.id} className="border border-gray-100 shadow-sm">
@@ -43,16 +49,17 @@ export default function MyTastingsPage() {
       </CardHeader>
       <CardContent className="text-sm text-gray-600">
         {(isHost ? 'Veranstaltet' : 'Veranstalter')}{!isHost && t.hostName ? `: ${t.hostName}` : ''}
+        <div className="mt-1 text-xs text-gray-500">Status: {(t.status || '').toUpperCase()}</div>
       </CardContent>
       <CardFooter>
         <Button
           className="bg-[#274E37] hover:bg-[#1E3E2B]"
           onClick={() => {
-            if (isHost) navigate(`/host/dashboard/${t.id}`);
+            if (isHost) navigate(`/host/tasting/${t.id}`);
             else navigate(`/tasting/${t.id}/results`);
           }}
         >
-          Ergebnis
+          {isHost ? 'Ansehen' : 'Ergebnis'}
         </Button>
       </CardFooter>
     </Card>
@@ -68,8 +75,8 @@ export default function MyTastingsPage() {
         </TabsList>
         <TabsContent value="participated">
           <div className="grid gap-4 sm:grid-cols-2">
-            {participatedCompleted.length > 0 ? participatedCompleted.map(t => renderCard(t, false)) : (
-              <div className="text-gray-500">Keine abgeschlossenen Verkostungen</div>
+            {participatedAll.length > 0 ? participatedAll.map(t => renderCard(t, false)) : (
+              <div className="text-gray-500">Keine Verkostungen gefunden</div>
             )}
           </div>
         </TabsContent>

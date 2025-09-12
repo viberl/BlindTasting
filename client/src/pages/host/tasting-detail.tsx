@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Wine, Clock, AlarmClock, X, Users, Trophy, User as UserIcon, Share2, ClipboardList, Calendar } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import Leaderboard from "@/components/tasting/leaderboard";
+import { ScoringRule } from "@shared/schema";
 
 // Typdefinitionen
 interface User {
@@ -103,9 +104,13 @@ function FlightWineList({ flight, isHost }: { flight: Flight; isHost: boolean })
   const { data: guessStats } = useQuery<FlightGuessStats>({
     queryKey: ["flight-guess-stats", flight.id],
     queryFn: async () => {
-      const res = await fetch(`/api/flights/${flight.id}/guess-stats`, { credentials: 'include' });
-      if (!res.ok) throw new Error('Fehler beim Laden der Tipp-Statistiken');
-      return res.json();
+      try {
+        const res = await fetch(`/api/flights/${flight.id}/guess-stats`, { credentials: 'include' });
+        if (!res.ok) return { flightId: flight.id, tastingId: flight.tastingId, stats: [] } as any;
+        return res.json();
+      } catch {
+        return { flightId: flight.id, tastingId: flight.tastingId, stats: [] } as any;
+      }
     },
     refetchInterval: 3000,
     enabled: !!flight?.id,
@@ -181,6 +186,8 @@ export default function TastingDetailPage() {
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [wsTimerActive, setWsTimerActive] = useState(false);
   const [autoCompleteTriggered, setAutoCompleteTriggered] = useState(false);
+  // Per-varietal adjustments in participant dialog for 'anyVarietalPoint'
+  const [varietalAdjustments, setVarietalAdjustments] = useState<Record<number, { add: Set<string>; remove: Set<string> }>>({});
 
   // Teilnehmer laden
   const { data: participants = [], isLoading: isParticipantsLoading, refetch: refetchParticipants } = useQuery<ParticipantWithUser[]>({
@@ -401,6 +408,45 @@ export default function TastingDetailPage() {
     staleTime: 0, // Immer sofort neu laden!
   });
 
+  // Review & Freigabe entfernt – manuelles Punktetoggeln erfolgt direkt im Teilnehmer-Dialog
+
+  const overrideGuessMutation = useMutation({
+    mutationFn: async ({ guessId, overrideScore, reason, overrideFlags }: { guessId: number; overrideScore: number; reason?: string; overrideFlags?: any }) => {
+      const res = await apiRequest('PATCH', `/api/guesses/${guessId}/override`, { overrideScore, overrideReason: reason, overrideFlags });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || 'Override fehlgeschlagen');
+      }
+      return res.json();
+    },
+    onSuccess: async (data: any) => {
+      const delta = typeof data?.delta === 'number' ? data.delta : undefined;
+      const pid = participantDialog.participant?.id;
+      if (typeof delta === 'number' && pid) {
+        queryClient.setQueryData([`/api/tastings/${tastingId}/participants`], (old: any) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((p: any) => p.id === pid ? { ...p, score: (p.score ?? 0) + delta } : p);
+        });
+      }
+      await queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/participants`] });
+      if (participantDialog.participant?.id) {
+        await queryClient.invalidateQueries({ queryKey: ["/api/participants", participantDialog.participant.id, "guesses"] });
+      }
+      // also refresh stats and final results views
+      await queryClient.invalidateQueries({ queryKey: ["/api/tastings", tastingId, "final-stats"] });
+      if (lastCompletedFlight?.id) {
+        await queryClient.invalidateQueries({ queryKey: ["/api/flights", lastCompletedFlight.id, "stats"] });
+      }
+    },
+    onError: (e: Error) => {
+      try {
+        toast({ title: 'Fehler', description: e.message || 'Konnte Punkte nicht ändern', variant: 'destructive' });
+      } catch {}
+    }
+  });
+
+  // approveReview entfernt
+
   // Flag: Alle Flights abgeschlossen
   const allFlightsCompleted = useMemo(() => (flights && flights.length > 0 && flights.every(f => !!f.completedAt)), [flights]);
 
@@ -436,7 +482,7 @@ export default function TastingDetailPage() {
 
   // Teilnehmer-Details (Weine vs. Tipps) – Modal (muss VOR jeglicher Rückgabe definiert sein)
   const [participantDialog, setParticipantDialog] = useState<{ open: boolean; participant: any | null }>({ open: false, participant: null });
-  type Guess = { id: number; wineId: number; score: number; rating?: number | null; country?: string | null; region?: string | null; producer?: string | null; name?: string | null; vintage?: string | null; varietals?: string[] | null };
+  type Guess = { id: number; participantId: number; wineId: number; score: number; rating?: number | null; country?: string | null; region?: string | null; producer?: string | null; name?: string | null; vintage?: string | null; varietals?: string[] | null };
   const { data: participantGuesses } = useQuery<Guess[]>({
     queryKey: participantDialog.participant ? ["/api/participants", participantDialog.participant.id, "guesses"] : ["participant-guesses", "none"],
     queryFn: async () => {
@@ -446,6 +492,82 @@ export default function TastingDetailPage() {
     },
     enabled: !!participantDialog.participant?.id && participantDialog.open,
   });
+
+  // Scoring rules for field-level highlighting/toggling in participant dialog
+  const { data: scoringRules } = useQuery<ScoringRule>({
+    queryKey: [`/api/tastings/${tastingId}/scoring`],
+  });
+
+  // Helpers to compute automatic matches and scores per field
+  type FieldKey = 'country'|'region'|'producer'|'name'|'vintage'|'varietals';
+  const [guessAdjustments, setGuessAdjustments] = useState<Record<number, { add: Set<FieldKey>; remove: Set<FieldKey>; override: number }>>({});
+  const [busyGuessIds, setBusyGuessIds] = useState<Set<number>>(new Set());
+  const defaultScoring: ScoringRule = {
+    id: 0,
+    tastingId,
+    country: 1,
+    region: 1,
+    producer: 1,
+    wineName: 1,
+    vintage: 1,
+    varietals: 1,
+    anyVarietalPoint: true,
+    displayCount: 5,
+  };
+  const norm = (s?: string | null) => (s ?? '').toString().trim().toLowerCase();
+  const eqTxt = (a?: string | null, b?: string | null) => norm(a) === norm(b);
+  const eqVintage = (a?: string | null, b?: string | null) => {
+    const aa = (a ?? '').toString().trim();
+    const bb = (b ?? '').toString().trim();
+    return aa === bb || Number(aa) === Number(bb);
+  };
+  const computeAuto = (g: Guess, wine: Wine, rules?: ScoringRule) => {
+    const r = rules ?? defaultScoring;
+    const fields = {
+      country: !!(g.country && r.country > 0 && eqTxt(wine.country, g.country)),
+      region: !!(g.region && r.region > 0 && eqTxt(wine.region, g.region)),
+      producer: !!(g.producer && r.producer > 0 && eqTxt(wine.producer, g.producer)),
+      name: !!(g.name && r.wineName > 0 && eqTxt(wine.name, g.name)),
+      vintage: !!(g.vintage && r.vintage > 0 && eqVintage(wine.vintage, g.vintage)),
+      varietals: false as boolean,
+    };
+    let varietalMatches: boolean[] = [];
+    let varietalAutoPoints = 0;
+    if (g.varietals && g.varietals.length && r.varietals > 0) {
+      const wineVars = (wine.varietals || []).map(v => v.toLowerCase());
+      const guessVars = (g.varietals || []).map(v => v.toLowerCase());
+      varietalMatches = guessVars.map(v => wineVars.includes(v));
+      if (r.anyVarietalPoint) {
+        const matchedCount = varietalMatches.filter(Boolean).length;
+        fields.varietals = matchedCount > 0;
+        varietalAutoPoints = matchedCount * r.varietals;
+      } else {
+        const gw = guessVars.sort();
+        const ww = wineVars.slice().sort();
+        fields.varietals = gw.length === ww.length && gw.every((v, i) => v === ww[i]);
+        varietalAutoPoints = fields.varietals ? r.varietals : 0;
+      }
+    }
+    const autoScore =
+      (fields.country ? r.country : 0) +
+      (fields.region ? r.region : 0) +
+      (fields.producer ? r.producer : 0) +
+      (fields.name ? r.wineName : 0) +
+      (fields.vintage ? r.vintage : 0) +
+      varietalAutoPoints;
+    return { fields, autoScore, varietalMatches };
+  };
+  const fieldPoint = (key: 'country'|'region'|'producer'|'name'|'vintage'|'varietals', rules?: ScoringRule) => {
+    const r = rules ?? defaultScoring;
+    switch (key) {
+      case 'country': return r.country;
+      case 'region': return r.region;
+      case 'producer': return r.producer;
+      case 'name': return r.wineName;
+      case 'vintage': return r.vintage;
+      case 'varietals': return r.varietals;
+    }
+  };
 
   // Einladungen laden
   type Invite = { tastingId: number; email: string; role: string };
@@ -895,18 +1017,46 @@ export default function TastingDetailPage() {
       </Card>
 
       <Tabs defaultValue="flights" className="w-full">
-        <TabsList className="mb-6">
-          <TabsTrigger value="flights">Flights</TabsTrigger>
-          <TabsTrigger value="participants">
-            Teilnehmer ({participants ? participants.filter(p => p.user?.id !== tasting?.hostId).length : 0})
-          </TabsTrigger>
-          {/* Punktesystem in Einstellungen integriert */}
-          {isHost && <TabsTrigger value="settings">Einstellungen</TabsTrigger>}
-        </TabsList>
+        <div className="max-w-full rounded-2xl p-[1px] bg-[#e65b2d] mb-6">
+          <div className="rounded-2xl bg-vinaturel-light">
+            <TabsList className="!grid w-full grid-cols-3 min-h-[60px] pb-3 rounded-2xl overflow-visible outline-none bg-transparent" style={{ minHeight: '42px', paddingBottom: '8px' }}>
+              <TabsTrigger 
+                value="flights"
+                className="flex-1 flex items-center justify-center gap-2 data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-vinaturel-original data-[state=active]:font-medium rounded-md py-2 px-3 transition-colors text-vinaturel-original"
+              >
+                <ClipboardList className="h-4 w-4 flex-shrink-0" />
+                <span className="truncate">Flights</span>
+              </TabsTrigger>
+              <TabsTrigger 
+                value="participants"
+                className="flex-1 flex items-center justify-center gap-2 data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-vinaturel-original data-[state=active]:font-medium rounded-md py-2 px-3 transition-colors text-vinaturel-original"
+              >
+                <Users className="h-4 w-4 flex-shrink-0" />
+                <span className="truncate">Teilnehmer</span>
+                {participants && (
+                  <span className="ml-1 min-w-[20px] h-5 flex items-center justify-center px-1.5 py-0.5 rounded-full bg-vinaturel-original text-white text-xs font-medium">
+                    {participants.filter(p => p.user?.id !== tasting?.hostId).length}
+                  </span>
+                )}
+              </TabsTrigger>
+              {/* Punktesystem in Einstellungen integriert */}
+              {isHost && (
+                <TabsTrigger 
+                  value="settings"
+                  className="flex-1 flex items-center justify-center gap-2 data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-vinaturel-original data-[state=active]:font-medium rounded-md py-2 px-3 transition-colors text-vinaturel-original"
+                >
+                  <span className="truncate">Einstellungen</span>
+                </TabsTrigger>
+              )}
+            </TabsList>
+          </div>
+        </div>
         
         {/* Participants content moved lower with conditional rendering */}
         
         <TabsContent value="flights" className="space-y-6">
+          {/* Review & Freigabe entfernt – Punktevergabe erfolgt direkt im Teilnehmer-Dialog */}
+
           {/* Kompakte Statistiken: Zwischen- oder Endergebnis */}
           {!allFlightsCompleted && lastCompletedFlight && lastCompletedStats && (
             <Card>
@@ -1460,36 +1610,199 @@ export default function TastingDetailPage() {
           <DialogHeader>
             <DialogTitle>Tipps von {participantDialog.participant?.user?.name || participantDialog.participant?.name}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3 max-h-[70vh] overflow-auto pr-1">
-            {flights?.flatMap((f, idx) => (f.wines || []).map((w: any) => ({ ...w, flightIndex: idx + 1 }))).map((wine: any) => {
-              const g = participantGuesses?.find((x: any) => x.wineId === wine.id);
-              return (
-                <div key={wine.id} className="p-3 rounded border bg-gray-50">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center">
-                      <span className="h-7 w-7 mr-2 flex items-center justify-center rounded-full bg-[#274E37] text-white">
-                        {wine.letterCode}
-                      </span>
-                      <div>
-                        <div className="font-medium">{wine.producer} {wine.name}</div>
-                        <div className="text-xs text-gray-600">{wine.region}, {wine.country}, {wine.vintage}</div>
+          <div className="space-y-5 max-h-[70vh] overflow-auto pr-1">
+            {flights?.map((f) => (
+              <div key={f.id}>
+                <h3 className="text-base font-semibold text-gray-800 mb-2">{f.name}</h3>
+                <div className="space-y-3">
+                  {(f.wines || []).map((wine: any) => {
+                    const g = participantGuesses?.find((x: any) => x.wineId === wine.id);
+                    return (
+                      <div key={wine.id} className="p-3 rounded border bg-gray-50">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center">
+                            <span className="h-7 w-7 mr-2 flex items-center justify-center rounded-full bg-[#274E37] text-white">
+                              {wine.letterCode}
+                            </span>
+                            <div>
+                              <div className="font-medium">{wine.producer} {wine.name}</div>
+                              <div className="text-xs text-gray-600">{wine.region}, {wine.country}, {wine.vintage}</div>
+                            </div>
+                          </div>
+                          <Badge className="bg-[#274E37]">
+                            {(() => {
+                              if (!g) return '0 Pkt';
+                              const r = scoringRules ?? defaultScoring;
+                              const auto = computeAuto(g as any, wine, r);
+                              const adj = guessAdjustments[g.id];
+                              const isActive = (key: FieldKey) => {
+                                const base = (auto.fields as any)[key] === true;
+                                if (adj) {
+                                  if (base && adj.remove.has(key)) return false;
+                                  if (!base && adj.add.has(key)) return true;
+                                }
+                                return base;
+                              };
+                              const baseOther = (isActive('country') ? r.country : 0)
+                                + (isActive('region') ? r.region : 0)
+                                + (isActive('producer') ? r.producer : 0)
+                                + (isActive('name') ? r.wineName : 0)
+                                + (isActive('vintage') ? r.vintage : 0);
+                              if (r.anyVarietalPoint) {
+                                const baseMatches = auto.varietalMatches || [];
+                                const curr = varietalAdjustments[g.id];
+                                const add = curr?.add || new Set<string>();
+                                const remove = curr?.remove || new Set<string>();
+                                const guessVarsOrig = g.varietals || [];
+                                const activeCount = guessVarsOrig.reduce((acc, v, i) => {
+                                  const base = !!baseMatches[i];
+                                  if (base && remove.has(v)) return acc;
+                                  if (!base && add.has(v)) return acc + 1;
+                                  return acc + (base ? 1 : 0);
+                                }, 0);
+                                return `${baseOther + activeCount * r.varietals} Pkt`;
+                              }
+                              const varietalsOn = isActive('varietals') ? r.varietals : 0;
+                              return `${baseOther + varietalsOn} Pkt`;
+                            })()}
+                          </Badge>
+                        </div>
+                        <div className="mt-2 text-sm text-gray-700">
+                          <div className="font-medium">Tipp des Teilnehmers</div>
+                          {g ? (
+                            (() => {
+                              const r = scoringRules ?? defaultScoring;
+                              const auto = computeAuto(g, wine, r);
+                              const adj = guessAdjustments[g.id];
+                              const isActive = (key: FieldKey) => {
+                                const base = (auto.fields as any)[key] === true;
+                                if (adj) {
+                                  if (base && adj.remove.has(key)) return false;
+                                  if (!base && adj.add.has(key)) return true;
+                                }
+                                return base;
+                              };
+                              const chip = (label: string, active: boolean, onClick: () => void, points: number) => {
+                                if (!points) {
+                                  return (
+                                    <span className="text-xs mr-2 mb-2 inline-flex items-center px-2 py-1 rounded border bg-gray-100 border-gray-300 text-gray-500 cursor-default">
+                                      {label}
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClick(); }}
+                                    className={`text-xs mr-2 mb-2 inline-flex items-center px-2 py-1 rounded border ${active ? 'bg-green-100 border-green-300 text-green-800' : 'bg-orange-100 border-orange-300 text-orange-800'}`}
+                                    title={active ? 'Punkt entfernen' : 'Punkt vergeben'}
+                                  >
+                                    {label}
+                                  </button>
+                                );
+                              };
+                              const toggle = (key: 'country'|'region'|'producer'|'name'|'vintage'|'varietals') => {
+                                const r = scoringRules ?? defaultScoring;
+                                if (!g || busyGuessIds.has(g.id)) return;
+                                const { autoScore, fields } = computeAuto(g, wine, r);
+                                const p = fieldPoint(key, r);
+                                if (!p) return;
+                                const currentAdj = guessAdjustments[g.id] || { add: new Set<FieldKey>(), remove: new Set<FieldKey>(), override: (g.score ?? 0) - autoScore };
+                                const add = new Set<FieldKey>(currentAdj.add);
+                                const remove = new Set<FieldKey>(currentAdj.remove);
+                                const isAuto = (fields as any)[key] === true;
+                                if (isAuto) {
+                                  if (remove.has(key)) remove.delete(key); else remove.add(key);
+                                } else {
+                                  if (add.has(key)) add.delete(key); else add.add(key);
+                                }
+                                const active = (k: FieldKey) => {
+                                  const base = (fields as any)[k] === true;
+                                  if (base && remove.has(k)) return false;
+                                  if (!base && add.has(k)) return true;
+                                  return base;
+                                };
+                                const desired = (active('country') ? r.country : 0)
+                                              + (active('region') ? r.region : 0)
+                                              + (active('producer') ? r.producer : 0)
+                                              + (active('name') ? r.wineName : 0)
+                                              + (active('vintage') ? r.vintage : 0)
+                                              + (active('varietals') ? r.varietals : 0);
+                                const newOverride = Math.max(0, desired) - autoScore;
+                                setGuessAdjustments(prev => ({ ...prev, [g.id]: { add, remove, override: newOverride } }));
+                                setBusyGuessIds(prev => new Set(prev).add(g.id));
+                                const overrideFlags = { add: Array.from(add), remove: Array.from(remove), varietalAdd: [], varietalRemove: [] };
+                                overrideGuessMutation.mutate({ guessId: g.id, overrideScore: newOverride, overrideFlags }, {
+                                  onSettled: () => {
+                                    setBusyGuessIds(prev => { const next = new Set(prev); next.delete(g.id); return next; });
+                                  },
+                                });
+                              };
+                              return (
+                                <div className="flex flex-wrap">
+                                  {chip(g.country || '-', isActive('country'), () => toggle('country'), r.country)}
+                                  {chip(g.region || '-', isActive('region'), () => toggle('region'), r.region)}
+                                  {chip(g.producer || '-', isActive('producer'), () => toggle('producer'), r.producer)}
+                                  {chip(g.name || '-', isActive('name'), () => toggle('name'), r.wineName)}
+                                  {chip(g.vintage || '-', isActive('vintage'), () => toggle('vintage'), r.vintage)}
+                                  {(r.anyVarietalPoint
+                                    ? ((g.varietals || []).map((v: string, i: number) => {
+                                        const base = !!(auto.varietalMatches || [])[i];
+                                        const curr = varietalAdjustments[g.id];
+                                        const add = curr?.add || new Set<string>();
+                                        const remove = curr?.remove || new Set<string>();
+                                        const active = (base && !remove.has(v)) || (!base && add.has(v));
+                                        return chip(v, active, () => {
+                                          if (!g || busyGuessIds.has(g.id)) return;
+                                          const r = scoringRules ?? defaultScoring;
+                                          if (!r.varietals || !r.anyVarietalPoint) return;
+                                          const a = computeAuto(g, wine, r);
+                                          const curr2 = varietalAdjustments[g.id] || { add: new Set<string>(), remove: new Set<string>() };
+                                          const add2 = new Set(curr2.add);
+                                          const remove2 = new Set(curr2.remove);
+                                          if (base) { if (remove2.has(v)) remove2.delete(v); else remove2.add(v); }
+                                          else { if (add2.has(v)) add2.delete(v); else add2.add(v); }
+                                          const guessVarsOrig = g.varietals || [];
+                                          const desiredCount = guessVarsOrig.reduce((acc, vv, ii) => {
+                                            const b = !!(a.varietalMatches || [])[ii];
+                                            if (b && remove2.has(vv)) return acc;
+                                            if (!b && add2.has(vv)) return acc + 1;
+                                            return acc + (b ? 1 : 0);
+                                          }, 0);
+                                          const basePointsOther = a.autoScore - ((a.varietalMatches || []).filter(Boolean).length * r.varietals);
+                                          const desiredTotal = basePointsOther + desiredCount * r.varietals;
+                                          const newOverride = Math.max(0, desiredTotal - a.autoScore);
+                                          setVarietalAdjustments(prev => ({ ...prev, [g.id]: { add: add2, remove: remove2 } }));
+                                          setBusyGuessIds(prev => new Set(prev).add(g.id));
+                                          const fieldAdj = guessAdjustments[g.id];
+                                          const overrideFlags = {
+                                            add: fieldAdj ? Array.from(fieldAdj.add) : [],
+                                            remove: fieldAdj ? Array.from(fieldAdj.remove) : [],
+                                            varietalAdd: Array.from(add2),
+                                            varietalRemove: Array.from(remove2),
+                                          };
+                                          overrideGuessMutation.mutate({ guessId: g.id, overrideScore: newOverride, overrideFlags }, {
+                                            onSettled: () => {
+                                              setBusyGuessIds(prev => { const next = new Set(prev); next.delete(g.id); return next; });
+                                            },
+                                          });
+                                        }, r.varietals);
+                                      }))
+                                    : chip(g.varietals && g.varietals.length ? g.varietals.join(', ') : '-', isActive('varietals'), () => toggle('varietals'), r.varietals)
+                                  )}
+                                </div>
+                              );
+                            })()
+                          ) : (
+                            <div className="text-xs text-gray-500">Kein Tipp abgegeben</div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <Badge className="bg-[#274E37]">{g?.score ?? 0} Pkt</Badge>
-                  </div>
-                  <div className="mt-2 text-sm text-gray-700">
-                    <div className="font-medium">Tipp des Teilnehmers</div>
-                    {g ? (
-                      <div className="text-xs">
-                        {g.country || '-'}, {g.region || '-'}, {g.producer || '-'}, {g.name || '-'}, {g.vintage || '-'}{g.varietals && g.varietals.length ? `, ${g.varietals.join(', ')}` : ''}
-                      </div>
-                    ) : (
-                      <div className="text-xs text-gray-500">Kein Tipp abgegeben</div>
-                    )}
-                  </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         </DialogContent>
       </Dialog>
