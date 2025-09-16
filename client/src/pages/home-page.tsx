@@ -16,7 +16,7 @@ import { PlusCircle, CalendarClock, Users, Globe, Lock, Wine, User, X } from 'lu
 import { format, formatDistanceToNow } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { useToast } from "@/hooks/use-toast";
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 interface Tasting {
   id: number;
@@ -37,6 +37,12 @@ interface Tasting {
 
 type TastingsResponse = Tasting[];
 
+// zentrale Prüfung, ob eine Verkostung bereits abgeschlossen ist
+const isTastingCompleted = (tasting: Tasting) => {
+  const normalizedStatus = tasting.status?.toLowerCase();
+  return normalizedStatus === 'completed' || Boolean(tasting.completedAt);
+};
+
 // Hilfsfunktion zum Gruppieren der Verkostungen
 function groupTastings(tastings: Tasting[], userId?: number) {
   const result = {
@@ -47,6 +53,10 @@ function groupTastings(tastings: Tasting[], userId?: number) {
   };
 
   tastings.forEach(tasting => {
+    if (isTastingCompleted(tasting)) {
+      return;
+    }
+
     const tastingWithTimestamp = {
       ...tasting,
       updatedAt: tasting.updatedAt || tasting.createdAt
@@ -77,7 +87,7 @@ function groupTastings(tastings: Tasting[], userId?: number) {
   result.invitedTastings.sort(sortByDate);
   result.myTastings.sort(sortByDate);
 
-  result.totalTastings = tastings.length;
+  result.totalTastings = result.publicTastings.length + result.invitedTastings.length + result.myTastings.length;
   return result;
 }
 
@@ -138,11 +148,14 @@ export default function HomePage() {
   // Debug log the tastings data
   console.log('All tastings with host info:', tastings);
   
+  const activeTastings = useMemo(() => (tastings || []).filter(tasting => !isTastingCompleted(tasting)), [tastings]);
+  console.log('Filtered tastings (without completed):', activeTastings);
+  
   // Fallback: Host-Info Map nachladen, falls leer
   const [hostInfoMap, setHostInfoMap] = useState<Record<number, { hostName: string; hostCompany: string | null }>>({});
   useEffect(() => {
     (async () => {
-      const missing = (tastings || []).filter(t => !t.hostName || String(t.hostName).trim().length === 0);
+      const missing = (activeTastings || []).filter(t => !t.hostName || String(t.hostName).trim().length === 0);
       for (const t of missing) {
         if (hostInfoMap[t.id]) continue;
         try {
@@ -154,10 +167,10 @@ export default function HomePage() {
         } catch {}
       }
     })();
-  }, [tastings]);
+  }, [activeTastings]);
 
   // Gruppiere Tastings via Hilfsfunktion
-  const { publicTastings, invitedTastings, myTastings, totalTastings } = groupTastings(tastings, user?.id);
+  const { publicTastings, invitedTastings, myTastings, totalTastings } = groupTastings(activeTastings, user?.id);
 
   // Debug log the grouped tastings
   console.log('Grouped tastings:', { 
@@ -281,7 +294,7 @@ export default function HomePage() {
             <X className="h-4 w-4 text-gray-500" />
           </button>
         )}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex flex-col gap-4">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <h3 className="text-lg font-semibold">{tasting.name}</h3>
@@ -326,19 +339,16 @@ export default function HomePage() {
               )}
             </div>
           </div>
-          
-          <div className="flex-shrink-0">
-            <Button 
-              onClick={() => type === 'myTastings' 
-                ? navigate(`/host/tasting/${tasting.id}`)
-                : handleJoinTasting(tasting)}
-              className="bg-vinaturel-original hover:bg-vinaturel-highlight text-white transition-colors whitespace-nowrap"
-              disabled={isCompleted}
-            >
-              {actionText}
-              {isCompleted && ' (Abgeschlossen)'}
-            </Button>
-          </div>
+          <Button 
+            onClick={() => type === 'myTastings' 
+              ? navigate(`/host/tasting/${tasting.id}`)
+              : handleJoinTasting(tasting)}
+            className="self-start bg-vinaturel-original hover:bg-vinaturel-highlight text-white transition-colors whitespace-nowrap"
+            disabled={isCompleted}
+          >
+            {actionText}
+            {isCompleted && ' (Abgeschlossen)'}
+          </Button>
         </div>
       </div>
     );
@@ -349,7 +359,7 @@ export default function HomePage() {
       <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold text-vinaturel-original">
-            Prost, <span className="text-vinaturel-highlight">{user?.name || 'Weinliebhaber'}</span>!
+            Cheers, <span className="text-vinaturel-highlight">{user?.name || 'Weinliebhaber'}</span>!
           </h1>
           <p className="text-muted-foreground mt-1">Erstellen oder nehmen Sie an Weintastings teil</p>
         </div>

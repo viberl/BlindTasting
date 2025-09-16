@@ -22,8 +22,9 @@ import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Input } from "@/components/ui/input";
+import RankedAvatar from "@/components/tasting/ranked-avatar";
 
 interface Participant {
   id: number;
@@ -81,6 +82,16 @@ interface Flight {
   completedAt: string | null;
   wines: Wine[];
 }
+
+type PointsConfigurationState = {
+  producer: number;
+  name: number;
+  vintage: number;
+  country: number;
+  region: number;
+  varietals: number;
+  varietalsMode: 'per' | 'all';
+};
 
 // Guess stats response types
 interface FlightGuessStats {
@@ -374,7 +385,7 @@ export default function TastingDetailPage() {
   const [selectedFlightId, setSelectedFlightId] = useState<number | null>(null);
   
   // State für Punktesystem und Einstellungen
-  const [pointsConfiguration, setPointsConfiguration] = useState({
+  const [pointsConfiguration, setPointsConfiguration] = useState<PointsConfigurationState>({
     producer: 1,
     name: 1,
     vintage: 1,
@@ -383,7 +394,23 @@ export default function TastingDetailPage() {
     varietals: 1,
     varietalsMode: 'per' // 'per' = Punkte pro Rebsorte, 'all' = Punkte nur wenn alle korrekt
   });
+  const [hasScoringRules, setHasScoringRules] = useState(false);
   const [leaderboardVisibility, setLeaderboardVisibility] = useState(3); // 0 = Alle anzeigen
+  const { data: scoringRules, isLoading: isScoringRulesLoading } = useQuery<ScoringRule | null>({
+    queryKey: [`/api/tastings/${tastingId}/scoring`],
+    queryFn: async () => {
+      try {
+        const res = await apiRequest('GET', `/api/tastings/${tastingId}/scoring`);
+        return await res.json();
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('404')) {
+          return null;
+        }
+        throw error;
+      }
+    },
+    enabled: !isNaN(tastingId),
+  });
   
   // Lade Tastings-Details
   const { data: tasting, isLoading: isTastingLoading, error: tastingError } = useQuery<Tasting>({
@@ -394,6 +421,37 @@ export default function TastingDetailPage() {
     },
     enabled: !isNaN(tastingId),
   });
+
+  const scoringLocked = Boolean(tasting?.status && tasting.status !== 'draft');
+  const canEditScoring = Boolean(tasting && user && tasting.hostId === user.id && !scoringLocked);
+
+  useEffect(() => {
+    if (scoringRules) {
+      setHasScoringRules(true);
+      const configFromRules: PointsConfigurationState = {
+        producer: scoringRules.producer ?? 0,
+        name: scoringRules.wineName ?? 0,
+        vintage: scoringRules.vintage ?? 0,
+        country: scoringRules.country ?? 0,
+        region: scoringRules.region ?? 0,
+        varietals: scoringRules.varietals ?? 0,
+        varietalsMode: scoringRules.anyVarietalPoint ? 'per' : 'all',
+      };
+      setPointsConfiguration((prev) => {
+        const isSame =
+          prev.producer === configFromRules.producer &&
+          prev.name === configFromRules.name &&
+          prev.vintage === configFromRules.vintage &&
+          prev.country === configFromRules.country &&
+          prev.region === configFromRules.region &&
+          prev.varietals === configFromRules.varietals &&
+          prev.varietalsMode === configFromRules.varietalsMode;
+        return isSame ? prev : configFromRules;
+      });
+    } else if (scoringRules === null) {
+      setHasScoringRules(false);
+    }
+  }, [scoringRules]);
 
   // Flights-Query mit Debug-Log
   const { data: flights, isLoading: isFlightsLoading, refetch: refetchFlights } = useQuery<Flight[]>({
@@ -494,9 +552,6 @@ export default function TastingDetailPage() {
   });
 
   // Scoring rules for field-level highlighting/toggling in participant dialog
-  const { data: scoringRules } = useQuery<ScoringRule>({
-    queryKey: [`/api/tastings/${tastingId}/scoring`],
-  });
 
   // Helpers to compute automatic matches and scores per field
   type FieldKey = 'country'|'region'|'producer'|'name'|'vintage'|'varietals';
@@ -568,6 +623,111 @@ export default function TastingDetailPage() {
       case 'varietals': return r.varietals;
     }
   };
+
+  const saveScoringRulesMutation = useMutation({
+    mutationFn: async ({
+      config,
+      displayCount,
+    }: {
+      config: PointsConfigurationState;
+      displayCount: number | null;
+    }): Promise<ScoringRule> => {
+      const payload = {
+        country: config.country,
+        region: config.region,
+        producer: config.producer,
+        wineName: config.name,
+        vintage: config.vintage,
+        varietals: config.varietals,
+        anyVarietalPoint: config.varietalsMode === 'per',
+        displayCount,
+      };
+
+      const res = await apiRequest('POST', `/api/tastings/${tastingId}/scoring`, payload);
+      return await res.json();
+    },
+    onSuccess: (data) => {
+      setHasScoringRules(true);
+      setPointsConfiguration((prev) => ({
+        producer: data.producer ?? prev.producer,
+        name: data.wineName ?? prev.name,
+        vintage: data.vintage ?? prev.vintage,
+        country: data.country ?? prev.country,
+        region: data.region ?? prev.region,
+        varietals: data.varietals ?? prev.varietals,
+        varietalsMode: data.anyVarietalPoint ? 'per' : 'all',
+      }));
+      queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/scoring`] });
+    },
+    onError: (error) => {
+      if (!hasScoringRules) {
+        setHasScoringRules(false);
+      }
+      toast({
+        title: 'Fehler',
+        description: error instanceof Error ? error.message : 'Punktesystem konnte nicht gespeichert werden.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const persistScoringConfig = (
+    configuration: PointsConfigurationState,
+    forceCreate = false
+  ) => {
+    if (!tastingId) return;
+    const shouldCreate = forceCreate || !hasScoringRules;
+    if (shouldCreate) {
+      setHasScoringRules(true);
+    }
+
+    const displayCount = scoringRules?.displayCount ?? 5;
+
+    saveScoringRulesMutation.mutate({
+      config: configuration,
+      displayCount,
+    }, {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/participants`] });
+        queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/participants`, 'host-view'] });
+      },
+    });
+  };
+
+  const scoringButtonsDisabled = !canEditScoring || saveScoringRulesMutation.isPending || isScoringRulesLoading;
+
+  const updatePointsConfiguration = (partial: Partial<PointsConfigurationState>) => {
+    if (!canEditScoring) {
+      return;
+    }
+
+    setPointsConfiguration((prev) => {
+      const next: PointsConfigurationState = { ...prev, ...partial };
+      const hasChanged = (Object.keys(partial) as Array<keyof PointsConfigurationState>)
+        .some((key) => partial[key] !== undefined && partial[key] !== prev[key]);
+      if (hasChanged) {
+        persistScoringConfig(next);
+        return next;
+      }
+      return prev;
+    });
+  };
+
+  const previousStatusRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const currentStatus = tasting?.status;
+    if (!currentStatus || !tasting || !user || tasting.hostId !== user.id) {
+      return;
+    }
+
+    const previous = previousStatusRef.current;
+    if (previous !== currentStatus) {
+      if ((previous === undefined || previous === 'draft') && currentStatus !== 'draft' && !hasScoringRules) {
+        persistScoringConfig(pointsConfiguration, true);
+      }
+      previousStatusRef.current = currentStatus;
+    }
+  }, [tasting?.status, hasScoringRules, pointsConfiguration]);
 
   // Einladungen laden
   type Invite = { tastingId: number; email: string; role: string };
@@ -759,41 +919,16 @@ export default function TastingDetailPage() {
   };
   
   // Punktesystem-Handler
-  const handlePointsChange = (field: string, value: number) => {
-    setPointsConfiguration(prev => ({
-      ...prev,
-      [field]: value
-    }));
-    
-    // Hier würde im fertigen System die API aufgerufen werden, um die Punkte-Konfiguration zu speichern
-    toast({
-      title: "Punktesystem aktualisiert",
-      description: `Punkte für ${field} auf ${value} gesetzt.`,
-    });
+  const handlePointsChange = (field: keyof PointsConfigurationState, value: number) => {
+    updatePointsConfiguration({ [field]: value } as Partial<PointsConfigurationState>);
   };
   
   const handleVarietalsChange = (value: number) => {
-    setPointsConfiguration(prev => ({
-      ...prev,
-      varietals: value
-    }));
-    
-    toast({
-      title: "Punktesystem aktualisiert",
-      description: `Punkte für Rebsorten auf ${value} gesetzt.`,
-    });
+    updatePointsConfiguration({ varietals: value });
   };
   
   const handleVarietalsModeChange = (mode: 'per' | 'all') => {
-    setPointsConfiguration(prev => ({
-      ...prev,
-      varietalsMode: mode
-    }));
-    
-    toast({
-      title: "Punktesystem aktualisiert",
-      description: `Rebsorten-Modus auf "${mode === 'per' ? 'Punkte pro Rebsorte' : 'Punkte nur bei allen korrekt'}" gesetzt.`,
-    });
+    updatePointsConfiguration({ varietalsMode: mode });
   };
   
   // Einstellungen-Handler
@@ -1340,6 +1475,7 @@ export default function TastingDetailPage() {
               <CardHeader>
                 <CardTitle>Teilnehmer‑Ranking</CardTitle>
                 <CardDescription>Gesamtpunktestand der Teilnehmer</CardDescription>
+                <CardDescription>Klicke auf den Namen um die Punkte zu sehen und anzupassen.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-2">
                 {participants && participants.length > 0 ? (
@@ -1347,7 +1483,6 @@ export default function TastingDetailPage() {
                     .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
                     .map((p: any, idx: number) => {
                       const rank = idx + 1;
-                      const badgeColor = rank === 1 ? 'bg-yellow-500' : rank === 2 ? 'bg-gray-400' : rank === 3 ? 'bg-amber-700' : 'bg-gray-300';
                       const ptsColor = rank === 1 ? 'bg-yellow-500' : rank === 2 ? 'bg-gray-400' : rank === 3 ? 'bg-amber-700' : 'bg-gray-200';
                       return (
                         <div
@@ -1356,18 +1491,12 @@ export default function TastingDetailPage() {
                           onClick={() => setParticipantDialog({ open: true, participant: p })}
                         >
                           <div className="flex items-center gap-3">
-                            <div className="relative">
-                              <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center">
-                                {p.user?.profileImage ? (
-                                  <img src={p.user.profileImage} alt={p.user?.name || 'Avatar'} className="h-full w-full object-cover" />
-                                ) : (
-                                  <span className="text-sm text-gray-600">{(p.user?.name || '?').slice(0,1)}</span>
-                                )}
-                              </div>
-                              {rank <= 3 && (
-                                <span className={`absolute -bottom-1 -right-1 h-4 w-4 rounded-full border border-white ${badgeColor}`}></span>
-                              )}
-                            </div>
+                            <RankedAvatar
+                              imageUrl={p.user?.profileImage}
+                              name={p.user?.name}
+                              rank={rank}
+                              sizeClass="h-12 w-12"
+                            />
                             <div>
                               <div className="font-medium">{p.user?.name || 'Unbekannt'}</div>
                               <div className="text-xs text-gray-500">{p.user?.company || '—'}</div>
@@ -1406,12 +1535,25 @@ export default function TastingDetailPage() {
                     <p className="text-sm text-gray-500 mb-4">Legen Sie fest, wie viele Punkte für korrekt identifizierte Weinmerkmale vergeben werden (0-5 Punkte)</p>
                     {isHost ? (
                       <div className="space-y-6">
+                        {scoringLocked && (
+                          <div className="flex items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                            Das Punktesystem ist nach Start der Verkostung gesperrt.
+                          </div>
+                        )}
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-2">
                             <label className="text-sm font-medium">Produzent:</label>
                             <div className="flex items-center space-x-2">
                               {[0, 1, 2, 3, 4, 5].map((value) => (
-                                <button key={value} className={`w-10 h-10 rounded-full ${pointsConfiguration.producer === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handlePointsChange('producer', value)}>{value}</button>
+                                <button
+                                  key={value}
+                                  type="button"
+                                  disabled={scoringButtonsDisabled}
+                                  className={`w-10 h-10 rounded-full ${pointsConfiguration.producer === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'} ${scoringButtonsDisabled ? 'opacity-60 cursor-not-allowed hover:bg-gray-100' : ''}`}
+                                  onClick={() => handlePointsChange('producer', value)}
+                                >
+                                  {value}
+                                </button>
                               ))}
                             </div>
                           </div>
@@ -1419,7 +1561,15 @@ export default function TastingDetailPage() {
                             <label className="text-sm font-medium">Name:</label>
                             <div className="flex items-center space-x-2">
                               {[0, 1, 2, 3, 4, 5].map((value) => (
-                                <button key={value} className={`w-10 h-10 rounded-full ${pointsConfiguration.name === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handlePointsChange('name', value)}>{value}</button>
+                                <button
+                                  key={value}
+                                  type="button"
+                                  disabled={scoringButtonsDisabled}
+                                  className={`w-10 h-10 rounded-full ${pointsConfiguration.name === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'} ${scoringButtonsDisabled ? 'opacity-60 cursor-not-allowed hover:bg-gray-100' : ''}`}
+                                  onClick={() => handlePointsChange('name', value)}
+                                >
+                                  {value}
+                                </button>
                               ))}
                             </div>
                           </div>
@@ -1427,7 +1577,15 @@ export default function TastingDetailPage() {
                             <label className="text-sm font-medium">Jahrgang:</label>
                             <div className="flex items-center space-x-2">
                               {[0, 1, 2, 3, 4, 5].map((value) => (
-                                <button key={value} className={`w-10 h-10 rounded-full ${pointsConfiguration.vintage === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handlePointsChange('vintage', value)}>{value}</button>
+                                <button
+                                  key={value}
+                                  type="button"
+                                  disabled={scoringButtonsDisabled}
+                                  className={`w-10 h-10 rounded-full ${pointsConfiguration.vintage === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'} ${scoringButtonsDisabled ? 'opacity-60 cursor-not-allowed hover:bg-gray-100' : ''}`}
+                                  onClick={() => handlePointsChange('vintage', value)}
+                                >
+                                  {value}
+                                </button>
                               ))}
                             </div>
                           </div>
@@ -1435,7 +1593,15 @@ export default function TastingDetailPage() {
                             <label className="text-sm font-medium">Land:</label>
                             <div className="flex items-center space-x-2">
                               {[0, 1, 2, 3, 4, 5].map((value) => (
-                                <button key={value} className={`w-10 h-10 rounded-full ${pointsConfiguration.country === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handlePointsChange('country', value)}>{value}</button>
+                                <button
+                                  key={value}
+                                  type="button"
+                                  disabled={scoringButtonsDisabled}
+                                  className={`w-10 h-10 rounded-full ${pointsConfiguration.country === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'} ${scoringButtonsDisabled ? 'opacity-60 cursor-not-allowed hover:bg-gray-100' : ''}`}
+                                  onClick={() => handlePointsChange('country', value)}
+                                >
+                                  {value}
+                                </button>
                               ))}
                             </div>
                           </div>
@@ -1443,7 +1609,15 @@ export default function TastingDetailPage() {
                             <label className="text-sm font-medium">Region:</label>
                             <div className="flex items-center space-x-2">
                               {[0, 1, 2, 3, 4, 5].map((value) => (
-                                <button key={value} className={`w-10 h-10 rounded-full ${pointsConfiguration.region === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handlePointsChange('region', value)}>{value}</button>
+                                <button
+                                  key={value}
+                                  type="button"
+                                  disabled={scoringButtonsDisabled}
+                                  className={`w-10 h-10 rounded-full ${pointsConfiguration.region === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'} ${scoringButtonsDisabled ? 'opacity-60 cursor-not-allowed hover:bg-gray-100' : ''}`}
+                                  onClick={() => handlePointsChange('region', value)}
+                                >
+                                  {value}
+                                </button>
                               ))}
                             </div>
                           </div>
@@ -1451,15 +1625,37 @@ export default function TastingDetailPage() {
                             <label className="text-sm font-medium">Rebsorten:</label>
                             <div className="flex items-center space-x-2">
                               {[0, 1, 2, 3, 4, 5].map((value) => (
-                                <button key={value} className={`w-10 h-10 rounded-full ${pointsConfiguration.varietals === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handleVarietalsChange(value)}>{value}</button>
+                                <button
+                                  key={value}
+                                  type="button"
+                                  disabled={scoringButtonsDisabled}
+                                  className={`w-10 h-10 rounded-full ${pointsConfiguration.varietals === value ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'} ${scoringButtonsDisabled ? 'opacity-60 cursor-not-allowed hover:bg-gray-100' : ''}`}
+                                  onClick={() => handleVarietalsChange(value)}
+                                >
+                                  {value}
+                                </button>
                               ))}
                             </div>
                           </div>
                           <div className="space-y-2">
                             <label className="text-sm font-medium">Rebsorten‑Wertung:</label>
                             <div className="flex flex-col gap-2">
-                              <button className={`px-4 py-2 rounded text-sm ${pointsConfiguration.varietalsMode === 'per' ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handleVarietalsModeChange('per')}>Punkte pro korrekte Rebsorte</button>
-                              <button className={`px-4 py-2 rounded text-sm ${pointsConfiguration.varietalsMode === 'all' ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'}`} onClick={() => handleVarietalsModeChange('all')}>Punkte nur wenn alle Rebsorten korrekt</button>
+                              <button
+                                type="button"
+                                disabled={scoringButtonsDisabled}
+                                className={`px-4 py-2 rounded text-sm ${pointsConfiguration.varietalsMode === 'per' ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'} ${scoringButtonsDisabled ? 'opacity-60 cursor-not-allowed hover:bg-gray-100' : ''}`}
+                                onClick={() => handleVarietalsModeChange('per')}
+                              >
+                                Punkte pro korrekte Rebsorte
+                              </button>
+                              <button
+                                type="button"
+                                disabled={scoringButtonsDisabled}
+                                className={`px-4 py-2 rounded text-sm ${pointsConfiguration.varietalsMode === 'all' ? 'bg-[#274E37] text-white' : 'bg-gray-100 hover:bg-gray-200'} ${scoringButtonsDisabled ? 'opacity-60 cursor-not-allowed hover:bg-gray-100' : ''}`}
+                                onClick={() => handleVarietalsModeChange('all')}
+                              >
+                                Punkte nur wenn alle Rebsorten korrekt
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -1520,21 +1716,13 @@ export default function TastingDetailPage() {
                             Array.from({length: 5}).map((_, index) => (
                               <div key={index} className="flex justify-between items-center p-2 bg-white rounded">
                                 <div className="flex items-center">
-                                  <div className="relative mr-2">
-                                    <div className="w-8 h-8 rounded-full overflow-hidden">
-                                      <img 
-                                        src={`https://i.pravatar.cc/150?img=${index + 1}`} 
-                                        alt={`Profilbild Teilnehmer ${index + 1}`}
-                                        className="w-full h-full object-cover"
-                                      />
-                                    </div>
-                                    <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center border border-white ${
-                                      index === 0 ? 'bg-yellow-500' : 
-                                      index === 1 ? 'bg-gray-400' : 
-                                      index === 2 ? 'bg-amber-700' : 'bg-[#274E37]'
-                                    } text-white text-[10px] font-bold`}>
-                                      {index + 1}
-                                    </div>
+                                  <div className="mr-2">
+                                    <RankedAvatar
+                                      imageUrl={`https://i.pravatar.cc/150?img=${index + 1}`}
+                                      name={`Teilnehmer ${index + 1}`}
+                                      rank={index + 1}
+                                      sizeClass="h-10 w-10"
+                                    />
                                   </div>
                                   <span className="font-medium">Teilnehmer {index + 1}</span>
                                 </div>
@@ -1546,21 +1734,13 @@ export default function TastingDetailPage() {
                             Array.from({length: leaderboardVisibility}).map((_, index) => (
                               <div key={index} className="flex justify-between items-center p-2 bg-white rounded">
                                 <div className="flex items-center">
-                                  <div className="relative mr-2">
-                                    <div className="w-8 h-8 rounded-full overflow-hidden">
-                                      <img 
-                                        src={`https://i.pravatar.cc/150?img=${index + 1}`} 
-                                        alt={`Profilbild Teilnehmer ${index + 1}`}
-                                        className="w-full h-full object-cover"
-                                      />
-                                    </div>
-                                    <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center border border-white ${
-                                      index === 0 ? 'bg-yellow-500' : 
-                                      index === 1 ? 'bg-gray-400' : 
-                                      index === 2 ? 'bg-amber-700' : 'bg-[#274E37]'
-                                    } text-white text-[10px] font-bold`}>
-                                      {index + 1}
-                                    </div>
+                                  <div className="mr-2">
+                                    <RankedAvatar
+                                      imageUrl={`https://i.pravatar.cc/150?img=${index + 1}`}
+                                      name={`Teilnehmer ${index + 1}`}
+                                      rank={index + 1}
+                                      sizeClass="h-10 w-10"
+                                    />
                                   </div>
                                   <span className="font-medium">Teilnehmer {index + 1}</span>
                                 </div>

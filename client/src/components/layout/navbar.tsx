@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Wine, User, LogOut, ChevronDown } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export default function Navbar() {
   const { user, logoutMutation } = useAuth();
@@ -42,7 +43,12 @@ export default function Navbar() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="flex items-center gap-2">
-                  <User className="h-4 w-4" />
+                  <Avatar className="h-8 w-8 border border-gray-200">
+                    <AvatarImage src={user.profileImage} alt={user.name} />
+                    <AvatarFallback>
+                      {user.name?.charAt(0)?.toUpperCase() ?? "?"}
+                    </AvatarFallback>
+                  </Avatar>
                   <span className="hidden sm:inline">{user.name}</span>
                   <ChevronDown className="h-4 w-4" />
                 </Button>

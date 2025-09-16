@@ -143,8 +143,8 @@ export default function SubmitGuesses() {
     staleTime: 0,
     refetchOnMount: 'always',
     refetchInterval: 5000,
-    select: (data) => data as any,
-    onSuccess: (data) => {
+    select: (data: { wineId: number; wine?: Wine }[]) => data,
+    onSuccess: (data: { wineId: number; wine?: Wine }[]) => {
       const ids = new Set<number>();
       for (const g of data || []) {
         if (g?.wine?.id) ids.add(g.wine.id);

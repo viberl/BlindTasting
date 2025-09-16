@@ -192,14 +192,14 @@ export default function FinalResults() {
                     };
                     const wineVars = (wine.varietals || []).map((v: string) => v.toLowerCase());
                     const guessVars = (g.varietals || []).map((v: string) => v.toLowerCase());
-                    varietalMatches = guessVars.map(v => wineVars.includes(v));
+                    varietalMatches = guessVars.map((v: string) => wineVars.includes(v));
                     if (r.varietals > 0) {
                       if (r.anyVarietalPoint) {
                         baseFields.varietals = varietalMatches.some(Boolean);
                       } else {
                         const gw = guessVars.slice().sort();
                         const ww = wineVars.slice().sort();
-                        baseFields.varietals = gw.length === ww.length && gw.every((v, i) => v === ww[i]);
+                        baseFields.varietals = gw.length === ww.length && gw.every((v: string, i: number) => v === ww[i]);
                       }
                     }
                   }

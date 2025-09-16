@@ -1,9 +1,9 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Award, Medal, User } from "lucide-react";
+import { User } from "lucide-react";
+import RankedAvatar from "@/components/tasting/ranked-avatar";
 
 interface Participant {
   id: number;
@@ -15,6 +15,8 @@ interface Participant {
     id: number;
     name: string;
     email: string;
+    company?: string;
+    profileImage?: string | null;
   };
 }
 
@@ -28,29 +30,13 @@ interface LeaderboardProps {
 export default function Leaderboard({ tastingId, displayCount, currentUserId, onSelectParticipant }: LeaderboardProps) {
   const { data: participants, isLoading } = useQuery<Participant[]>({
     queryKey: [`/api/tastings/${tastingId}/participants`],
+    refetchInterval: 2000,
+    refetchIntervalInBackground: true,
   });
 
-  const getRankColor = (rank: number): string => {
-    switch (rank) {
-      case 1: return "bg-gold-100 border-gold-200 text-gold-800";
-      case 2: return "bg-gray-100 border-gray-200 text-gray-600";
-      case 3: return "bg-vine-100 border-vine-200 text-vine-800";
-      default: return "bg-white border-gray-200";
-    }
-  };
-
-  const getRankIcon = (rank: number) => {
-    switch (rank) {
-      case 1:
-        return <Award className="h-5 w-5 text-yellow-500" />;
-      case 2:
-        return <Award className="h-5 w-5 text-gray-400" />;
-      case 3:
-        return <Award className="h-5 w-5 text-amber-700" />;
-      default:
-        return <Medal className="h-5 w-5 text-gray-400" />;
-    }
-  };
+  const medalBg = (rank: number) => (
+    rank === 1 ? "bg-[#FFF9DB]" : rank === 2 ? "bg-gray-100" : rank === 3 ? "bg-[#FFECDD]" : "bg-white"
+  );
 
   if (isLoading) {
     return (
@@ -111,19 +97,18 @@ export default function Leaderboard({ tastingId, displayCount, currentUserId, on
               key={participant.id} 
               className={`
                 p-3 rounded-md border flex items-center space-x-3
-                ${getRankColor(rank)}
+                ${medalBg(rank)}
                 ${isCurrentUser ? 'ring-2 ring-[#274E37] ring-opacity-50' : ''}
                 ${onSelectParticipant ? 'cursor-pointer hover:opacity-90' : ''}
               `}
               onClick={() => onSelectParticipant && onSelectParticipant(participant)}
             >
-              <div className={`
-                h-8 w-8 flex items-center justify-center rounded-full 
-                ${rank <= 3 ? 'bg-white' : 'bg-gray-200 text-gray-600'}
-                text-sm font-medium
-              `}>
-                {getRankIcon(rank)}
-              </div>
+              <RankedAvatar
+                imageUrl={participant.user.profileImage}
+                name={participant.user.name}
+                rank={rank}
+                sizeClass="h-12 w-12"
+              />
               
               <div className="flex-1">
                 <div className="flex items-center">
@@ -138,9 +123,12 @@ export default function Leaderboard({ tastingId, displayCount, currentUserId, on
               </div>
               
               <Badge className={`
-                ${rank === 1 ? 'bg-yellow-500' : rank === 2 ? 'bg-gray-400' : rank === 3 ? 'bg-amber-700' : 'bg-gray-200'}
-                text-white font-bold
-             `}>
+                font-bold
+                ${rank === 1 ? 'bg-[#FFD700] text-white' : ''}
+                ${rank === 2 ? 'bg-[#C0C0C0] text-white' : ''}
+                ${rank === 3 ? 'bg-[#CD7F32] text-white' : ''}
+                ${rank > 3 ? 'bg-gray-200 text-gray-800' : ''}
+              `}>
                 {participant.score} Pkt
               </Badge>
             </div>

@@ -68,6 +68,10 @@ export interface IStorage {
   // Scoring Rules
   createScoringRule(rule: Omit<InsertScoringRule, 'id'>): Promise<ScoringRule>;
   getScoringRule(tastingId: number): Promise<ScoringRule | undefined>;
+  updateScoringRule(
+    tastingId: number,
+    rule: Partial<Omit<InsertScoringRule, 'id' | 'tastingId'>>
+  ): Promise<ScoringRule>;
   
   // Flight methods
   createFlight(flight: {
@@ -342,6 +346,49 @@ export class MemStorage implements IStorage {
       .select()
       .from(scoringRules)
       .where(eq(scoringRules.tastingId, tastingId));
+    return result[0];
+  }
+
+  async updateScoringRule(
+    tastingId: number,
+    rule: Partial<Omit<InsertScoringRule, 'id' | 'tastingId'>>
+  ): Promise<ScoringRule> {
+    const updates: Partial<{
+      country: number;
+      region: number;
+      producer: number;
+      wineName: number;
+      vintage: number;
+      varietals: number;
+      anyVarietalPoint: boolean;
+      displayCount: number | null;
+    }> = {};
+
+    if (rule.country !== undefined) updates.country = rule.country;
+    if (rule.region !== undefined) updates.region = rule.region;
+    if (rule.producer !== undefined) updates.producer = rule.producer;
+    if (rule.wineName !== undefined) updates.wineName = rule.wineName;
+    if (rule.vintage !== undefined) updates.vintage = rule.vintage;
+    if (rule.varietals !== undefined) updates.varietals = rule.varietals;
+    if (rule.anyVarietalPoint !== undefined) updates.anyVarietalPoint = rule.anyVarietalPoint;
+    if (rule.displayCount !== undefined) updates.displayCount = rule.displayCount;
+
+    if (Object.keys(updates).length === 0) {
+      const existing = await this.getScoringRule(tastingId);
+      if (!existing) throw new Error('Scoring rule not found');
+      return existing;
+    }
+
+    const result = await db
+      .update(scoringRules)
+      .set(updates as any)
+      .where(eq(scoringRules.tastingId, tastingId))
+      .returning();
+
+    if (!result[0]) {
+      throw new Error('Scoring rule not found');
+    }
+
     return result[0];
   }
 
@@ -1621,6 +1668,49 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(scoringRules)
       .where(eq(scoringRules.tastingId, tastingId));
+    return result[0];
+  }
+
+  async updateScoringRule(
+    tastingId: number,
+    rule: Partial<Omit<InsertScoringRule, 'id' | 'tastingId'>>
+  ): Promise<ScoringRule> {
+    const updates: Partial<{
+      country: number;
+      region: number;
+      producer: number;
+      wineName: number;
+      vintage: number;
+      varietals: number;
+      anyVarietalPoint: boolean;
+      displayCount: number | null;
+    }> = {};
+
+    if (rule.country !== undefined) updates.country = rule.country;
+    if (rule.region !== undefined) updates.region = rule.region;
+    if (rule.producer !== undefined) updates.producer = rule.producer;
+    if (rule.wineName !== undefined) updates.wineName = rule.wineName;
+    if (rule.vintage !== undefined) updates.vintage = rule.vintage;
+    if (rule.varietals !== undefined) updates.varietals = rule.varietals;
+    if (rule.anyVarietalPoint !== undefined) updates.anyVarietalPoint = rule.anyVarietalPoint;
+    if (rule.displayCount !== undefined) updates.displayCount = rule.displayCount;
+
+    if (Object.keys(updates).length === 0) {
+      const existing = await this.getScoringRule(tastingId);
+      if (!existing) throw new Error('Scoring rule not found');
+      return existing;
+    }
+
+    const result = await db
+      .update(scoringRules)
+      .set(updates as any)
+      .where(eq(scoringRules.tastingId, tastingId))
+      .returning();
+
+    if (!result[0]) {
+      throw new Error('Scoring rule not found');
+    }
+
     return result[0];
   }
 

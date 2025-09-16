@@ -502,20 +502,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only the host can set scoring rules" });
       }
       
+      if (tasting.status && tasting.status !== 'draft') {
+        return res.status(400).json({ error: "Scoring rules can only be set before the tasting starts" });
+      }
+
       // Validate scoring rule data
       const scoringRuleData = insertScoringRuleSchema.parse({
         ...req.body,
         tastingId
       });
-      
+
       // Check if scoring rules already exist
       const existingRules = await storage.getScoringRule(tastingId);
       if (existingRules) {
-        return res.status(400).json({ error: "Scoring rules already exist for this tasting" });
+        const { tastingId: _tid, ...updateFields } = scoringRuleData as any;
+        const updated = await storage.updateScoringRule(tastingId, updateFields);
+        return res.status(200).json(updated);
       }
-      
+
       const scoringRule = await storage.createScoringRule(scoringRuleData);
       res.status(201).json(scoringRule);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: error.errors });
+      } else {
+        res.status(500).json({ error: (error as Error).message });
+      }
+    }
+  });
+
+  // Update scoring rules for a tasting (before start)
+  app.patch("/api/tastings/:id/scoring", ensureAuthenticated, async (req, res) => {
+    try {
+      const tastingId = parseInt(req.params.id);
+
+      const tasting = await storage.getTasting(tastingId);
+      if (!tasting) {
+        return res.status(404).json({ error: "Tasting not found" });
+      }
+
+      if (tasting.hostId !== req.user!.id) {
+        return res.status(403).json({ error: "Only the host can update scoring rules" });
+      }
+
+      if (tasting.status && tasting.status !== 'draft') {
+        return res.status(400).json({ error: "Scoring rules can only be changed before the tasting starts" });
+      }
+
+      const existing = await storage.getScoringRule(tastingId);
+      if (!existing) {
+        return res.status(404).json({ error: "Scoring rules not found" });
+      }
+
+      const updateSchema = insertScoringRuleSchema.partial().omit({ tastingId: true });
+      const updateData = updateSchema.parse(req.body);
+
+      const updated = await storage.updateScoringRule(tastingId, updateData);
+      res.json(updated);
     } catch (error) {
       if (error instanceof z.ZodError) {
         res.status(400).json({ error: error.errors });
