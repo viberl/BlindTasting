@@ -422,7 +422,7 @@ export default function TastingDetailPage() {
     enabled: !isNaN(tastingId),
   });
 
-  const scoringLocked = Boolean(tasting?.status && tasting.status !== 'draft');
+  const scoringLocked = Boolean(tasting?.status && !['draft', 'active'].includes(tasting.status));
   const canEditScoring = Boolean(tasting && user && tasting.hostId === user.id && !scoringLocked);
 
   useEffect(() => {
@@ -658,6 +658,8 @@ export default function TastingDetailPage() {
         varietalsMode: data.anyVarietalPoint ? 'per' : 'all',
       }));
       queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/scoring`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/participants`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tastings", tastingId, "final-stats"] });
     },
     onError: (error) => {
       if (!hasScoringRules) {
@@ -1718,7 +1720,6 @@ export default function TastingDetailPage() {
                                 <div className="flex items-center">
                                   <div className="mr-2">
                                     <RankedAvatar
-                                      imageUrl={`https://i.pravatar.cc/150?img=${index + 1}`}
                                       name={`Teilnehmer ${index + 1}`}
                                       rank={index + 1}
                                       sizeClass="h-10 w-10"
@@ -1736,7 +1737,6 @@ export default function TastingDetailPage() {
                                 <div className="flex items-center">
                                   <div className="mr-2">
                                     <RankedAvatar
-                                      imageUrl={`https://i.pravatar.cc/150?img=${index + 1}`}
                                       name={`Teilnehmer ${index + 1}`}
                                       rank={index + 1}
                                       sizeClass="h-10 w-10"

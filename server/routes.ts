@@ -19,7 +19,11 @@ import {
   insertFlightSchema,
   insertWineSchema,
   insertGuessSchema,
-  insertParticipantSchema
+  insertParticipantSchema,
+  type ScoringRule,
+  type Guess,
+  type Wine,
+  type Participant
 } from "@shared/schema";
 import { Pool } from 'pg';
 
@@ -93,6 +97,96 @@ async function ensureAuthenticated(req: Request, res: Response, next: Function) 
     error: "Kein User eingeloggt"
   });
 }
+
+const normalizeText = (value?: string | null) => (value ?? '').toString().trim().toLowerCase();
+const equalText = (a?: string | null, b?: string | null) => normalizeText(a) === normalizeText(b);
+const equalVintage = (a?: string | null, b?: string | null) => {
+  const aa = (a ?? '').toString().trim();
+  const bb = (b ?? '').toString().trim();
+  return aa === bb || Number(aa) === Number(bb);
+};
+
+const calculateGuessScore = (guess: Guess, wine: Wine, rules: ScoringRule): number => {
+  if (!rules) return guess.score ?? 0;
+
+  let score = 0;
+  if (rules.country > 0 && guess.country && equalText(guess.country, wine.country)) {
+    score += rules.country;
+  }
+  if (rules.region > 0 && guess.region && equalText(guess.region, wine.region)) {
+    score += rules.region;
+  }
+  if (rules.producer > 0 && guess.producer && equalText(guess.producer, wine.producer)) {
+    score += rules.producer;
+  }
+  if (rules.wineName > 0 && guess.name && equalText(guess.name, wine.name)) {
+    score += rules.wineName;
+  }
+  if (rules.vintage > 0 && guess.vintage && equalVintage(guess.vintage, wine.vintage)) {
+    score += rules.vintage;
+  }
+
+  if (rules.varietals && rules.varietals > 0) {
+    const guessVarietals = Array.isArray(guess.varietals)
+      ? guess.varietals.map((v) => v?.toLowerCase?.() ?? '').filter(Boolean)
+      : [];
+    const wineVarietals = Array.isArray(wine.varietals)
+      ? wine.varietals.map((v) => v?.toLowerCase?.() ?? '').filter(Boolean)
+      : [];
+
+    if (guessVarietals.length && wineVarietals.length) {
+      if (rules.anyVarietalPoint) {
+        const matched = guessVarietals.filter((v) => wineVarietals.includes(v)).length;
+        score += matched * rules.varietals;
+      } else {
+        const sortedGuess = [...guessVarietals].sort();
+        const sortedWine = [...wineVarietals].sort();
+        const allMatch =
+          sortedGuess.length === sortedWine.length &&
+          sortedGuess.every((v, index) => v === sortedWine[index]);
+        if (allMatch) {
+          score += rules.varietals;
+        }
+      }
+    }
+  }
+
+  if (typeof guess.overrideScore === 'number') {
+    score += guess.overrideScore;
+  }
+
+  return score;
+};
+
+const recalculateScoresForTasting = async (tastingId: number, rules: ScoringRule) => {
+  const participants = await storage.getParticipantsByTasting(tastingId);
+  const flightsForTasting = await storage.getFlightsByTasting(tastingId);
+
+  const winesById: Record<number, Wine> = {};
+  for (const flight of flightsForTasting) {
+    const winesInFlight = await storage.getWinesByFlight(flight.id);
+    for (const wine of winesInFlight) {
+      winesById[wine.id] = wine;
+    }
+  }
+
+  const wineList = Object.values(winesById);
+
+  for (const participant of participants as Participant[]) {
+    let total = 0;
+
+    for (const wine of wineList) {
+      const guess = await storage.getGuessByWine(participant.id, wine.id);
+      if (!guess) continue;
+
+      const guessScore = calculateGuessScore(guess as Guess, wine as Wine, rules);
+      await storage.updateGuessScore(guess.id, guessScore);
+      total += guessScore;
+    }
+
+    await storage.updateParticipantScore(participant.id, total);
+  }
+};
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // In-memory WebSocket rooms for join page
@@ -502,8 +596,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only the host can set scoring rules" });
       }
       
-      if (tasting.status && tasting.status !== 'draft') {
-        return res.status(400).json({ error: "Scoring rules can only be set before the tasting starts" });
+      if (tasting.status && !['draft', 'active'].includes(tasting.status)) {
+        return res.status(400).json({ error: "Scoring rules can only be changed before the tasting starts" });
       }
 
       // Validate scoring rule data
@@ -517,10 +611,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (existingRules) {
         const { tastingId: _tid, ...updateFields } = scoringRuleData as any;
         const updated = await storage.updateScoringRule(tastingId, updateFields);
+        await recalculateScoresForTasting(tastingId, updated);
         return res.status(200).json(updated);
       }
 
       const scoringRule = await storage.createScoringRule(scoringRuleData);
+      await recalculateScoresForTasting(tastingId, scoringRule);
       res.status(201).json(scoringRule);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -558,6 +654,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updateData = updateSchema.parse(req.body);
 
       const updated = await storage.updateScoringRule(tastingId, updateData);
+      await recalculateScoresForTasting(tastingId, updated);
       res.json(updated);
     } catch (error) {
       if (error instanceof z.ZodError) {

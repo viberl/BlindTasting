@@ -118,7 +118,7 @@ export default function Leaderboard({ tastingId, displayCount, currentUserId, on
                   </p>
                 </div>
                 <p className="text-xs opacity-70">
-                  Beigetreten am {new Date(participant.joinedAt).toLocaleDateString()}
+                  {participant.user.company?.trim() || 'Unternehmen unbekannt'}
                 </p>
               </div>
               
