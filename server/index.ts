@@ -69,8 +69,13 @@ app.use((req, res, next) => {
   try {
     await db.execute(sql`ALTER TABLE "tastings" ADD COLUMN IF NOT EXISTS "show_rating_field" boolean DEFAULT true NOT NULL`);
     await db.execute(sql`ALTER TABLE "tastings" ADD COLUMN IF NOT EXISTS "show_notes_field" boolean DEFAULT true NOT NULL`);
+    await db.execute(sql`ALTER TABLE "flights" ADD COLUMN IF NOT EXISTS "review_approved_at" timestamp`);
+    await db.execute(sql`ALTER TABLE "guesses" ADD COLUMN IF NOT EXISTS "override_score" integer`);
+    await db.execute(sql`ALTER TABLE "guesses" ADD COLUMN IF NOT EXISTS "override_by" integer`);
+    await db.execute(sql`ALTER TABLE "guesses" ADD COLUMN IF NOT EXISTS "override_reason" text`);
+    await db.execute(sql`ALTER TABLE "guesses" ADD COLUMN IF NOT EXISTS "override_flags" json`);
   } catch (error) {
-    console.error('Failed to ensure tasting feedback columns exist:', error);
+    console.error('Failed to ensure database schema consistency:', error);
   }
 
   const server = await registerRoutes(app);
