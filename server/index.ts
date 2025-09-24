@@ -74,6 +74,49 @@ app.use((req, res, next) => {
     await db.execute(sql`ALTER TABLE "guesses" ADD COLUMN IF NOT EXISTS "override_by" integer`);
     await db.execute(sql`ALTER TABLE "guesses" ADD COLUMN IF NOT EXISTS "override_reason" text`);
     await db.execute(sql`ALTER TABLE "guesses" ADD COLUMN IF NOT EXISTS "override_flags" json`);
+
+    // Ensure cascades exist for dependent tables to allow tasting deletion in legacy DBs
+    await db.execute(sql`ALTER TABLE "flights" DROP CONSTRAINT IF EXISTS "flights_tasting_id_tastings_id_fk"`);
+    await db.execute(sql`ALTER TABLE "flights"
+      ADD CONSTRAINT "flights_tasting_id_tastings_id_fk"
+      FOREIGN KEY ("tasting_id") REFERENCES "public"."tastings"("id")
+      ON DELETE CASCADE ON UPDATE NO ACTION`);
+
+    await db.execute(sql`ALTER TABLE "participants" DROP CONSTRAINT IF EXISTS "participants_tasting_id_tastings_id_fk"`);
+    await db.execute(sql`ALTER TABLE "participants"
+      ADD CONSTRAINT "participants_tasting_id_tastings_id_fk"
+      FOREIGN KEY ("tasting_id") REFERENCES "public"."tastings"("id")
+      ON DELETE CASCADE ON UPDATE NO ACTION`);
+
+    await db.execute(sql`ALTER TABLE "guesses" DROP CONSTRAINT IF EXISTS "guesses_participant_id_participants_id_fk"`);
+    await db.execute(sql`ALTER TABLE "guesses"
+      ADD CONSTRAINT "guesses_participant_id_participants_id_fk"
+      FOREIGN KEY ("participant_id") REFERENCES "public"."participants"("id")
+      ON DELETE CASCADE ON UPDATE NO ACTION`);
+
+    await db.execute(sql`ALTER TABLE "guesses" DROP CONSTRAINT IF EXISTS "guesses_wine_id_wines_id_fk"`);
+    await db.execute(sql`ALTER TABLE "guesses"
+      ADD CONSTRAINT "guesses_wine_id_wines_id_fk"
+      FOREIGN KEY ("wine_id") REFERENCES "public"."wines"("id")
+      ON DELETE CASCADE ON UPDATE NO ACTION`);
+
+    await db.execute(sql`ALTER TABLE "wines" DROP CONSTRAINT IF EXISTS "wines_flight_id_flights_id_fk"`);
+    await db.execute(sql`ALTER TABLE "wines"
+      ADD CONSTRAINT "wines_flight_id_flights_id_fk"
+      FOREIGN KEY ("flight_id") REFERENCES "public"."flights"("id")
+      ON DELETE CASCADE ON UPDATE NO ACTION`);
+
+    await db.execute(sql`ALTER TABLE "scoring_rules" DROP CONSTRAINT IF EXISTS "scoring_rules_tasting_id_tastings_id_fk"`);
+    await db.execute(sql`ALTER TABLE "scoring_rules"
+      ADD CONSTRAINT "scoring_rules_tasting_id_tastings_id_fk"
+      FOREIGN KEY ("tasting_id") REFERENCES "public"."tastings"("id")
+      ON DELETE CASCADE ON UPDATE NO ACTION`);
+
+    await db.execute(sql`ALTER TABLE "tasting_invitees" DROP CONSTRAINT IF EXISTS "tasting_invitees_tasting_id_tastings_id_fk"`);
+    await db.execute(sql`ALTER TABLE "tasting_invitees"
+      ADD CONSTRAINT "tasting_invitees_tasting_id_tastings_id_fk"
+      FOREIGN KEY ("tasting_id") REFERENCES "public"."tastings"("id")
+      ON DELETE CASCADE ON UPDATE NO ACTION`);
   } catch (error) {
     console.error('Failed to ensure database schema consistency:', error);
   }
