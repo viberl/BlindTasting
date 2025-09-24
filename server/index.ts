@@ -11,6 +11,7 @@ import { setupAuth } from "./auth";
 import { scheduleDailyVinaturelCsvImport } from "./jobs/vinaturel-csv-scheduler";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+import { importVinaturelFromCsv } from "./services/vinaturel-csv-importer";
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -67,6 +68,53 @@ app.use((req, res, next) => {
 
 (async () => {
   try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "vinaturel_wines" (
+        "id" serial PRIMARY KEY,
+        "producer" text NOT NULL,
+        "name" text NOT NULL,
+        "country" text NOT NULL,
+        "region" text NOT NULL,
+        "vintage" integer NOT NULL,
+        "varietals" jsonb NOT NULL DEFAULT '[]'::jsonb,
+        "external_id" text NOT NULL,
+        "article_number" text,
+        "product_url" text,
+        "image_url" text,
+        "volume_ml" integer,
+        "varietal_1" text,
+        "varietal_2" text,
+        "varietal_3" text,
+        "created_at" timestamp with time zone DEFAULT now(),
+        "updated_at" timestamp with time zone DEFAULT now()
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "vinaturel_wines_external_id_unique_idx"
+      ON "vinaturel_wines" ("external_id")
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "idx_vinaturel_wines_article_number"
+      ON "vinaturel_wines" ("article_number")
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "idx_vinaturel_wines_search"
+      ON "vinaturel_wines" USING GIN (
+        to_tsvector('german', coalesce("producer", '') || ' ' || coalesce("name", '') || ' ' || coalesce("region", '') || ' ' || coalesce("country", ''))
+      )
+    `);
+
+    await db.execute(sql`ALTER TABLE "vinaturel_wines" ADD COLUMN IF NOT EXISTS "article_number" text`);
+    await db.execute(sql`ALTER TABLE "vinaturel_wines" ADD COLUMN IF NOT EXISTS "product_url" text`);
+    await db.execute(sql`ALTER TABLE "vinaturel_wines" ADD COLUMN IF NOT EXISTS "image_url" text`);
+    await db.execute(sql`ALTER TABLE "vinaturel_wines" ADD COLUMN IF NOT EXISTS "volume_ml" integer`);
+    await db.execute(sql`ALTER TABLE "vinaturel_wines" ADD COLUMN IF NOT EXISTS "varietal_1" text`);
+    await db.execute(sql`ALTER TABLE "vinaturel_wines" ADD COLUMN IF NOT EXISTS "varietal_2" text`);
+    await db.execute(sql`ALTER TABLE "vinaturel_wines" ADD COLUMN IF NOT EXISTS "varietal_3" text`);
+
     await db.execute(sql`ALTER TABLE "tastings" ADD COLUMN IF NOT EXISTS "show_rating_field" boolean DEFAULT true NOT NULL`);
     await db.execute(sql`ALTER TABLE "tastings" ADD COLUMN IF NOT EXISTS "show_notes_field" boolean DEFAULT true NOT NULL`);
     await db.execute(sql`ALTER TABLE "flights" ADD COLUMN IF NOT EXISTS "review_approved_at" timestamp`);
@@ -117,6 +165,19 @@ app.use((req, res, next) => {
       ADD CONSTRAINT "tasting_invitees_tasting_id_tastings_id_fk"
       FOREIGN KEY ("tasting_id") REFERENCES "public"."tastings"("id")
       ON DELETE CASCADE ON UPDATE NO ACTION`);
+
+    // Seed Vinaturel wines once via CSV import if the table is empty
+    try {
+      const wineCountResult = await db.execute(sql`SELECT COUNT(*)::int AS count FROM vinaturel_wines`);
+      const wineCount = Number((wineCountResult.rows?.[0] as any)?.count ?? 0);
+      if (wineCount === 0) {
+        console.log('[Startup] vinaturel_wines table empty – running initial CSV import');
+        const imported = await importVinaturelFromCsv();
+        console.log(`[Startup] CSV import completed, processed ${imported} wines`);
+      }
+    } catch (importError) {
+      console.error('[Startup] Failed to seed vinaturel_wines from CSV:', importError);
+    }
   } catch (error) {
     console.error('Failed to ensure database schema consistency:', error);
   }
