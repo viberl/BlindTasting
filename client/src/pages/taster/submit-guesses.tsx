@@ -69,10 +69,13 @@ const guessSchema = z.object({
   producer: z.string().optional(),
   name: z.string().optional(),
   vintage: z.preprocess((v) => (v === "" ? undefined : v), z.string().regex(/^\d{4}$/, { message: "Bitte 4-stelliges Jahr" }).optional()),
-  rating: z.preprocess(
-    (val) => (val === "" ? null : Number(val)),
-    z.number().min(88).max(100).nullable().optional()
-  ),
+  rating: z.preprocess((val) => {
+    if (val === "" || val === null || val === undefined) {
+      return undefined;
+    }
+    const numeric = Number(val);
+    return Number.isNaN(numeric) ? undefined : numeric;
+  }, z.number().min(88).max(100).optional()),
   notes: z.string().optional(),
 });
 
@@ -253,7 +256,7 @@ export default function SubmitGuesses() {
       producer: "",
       name: "",
       vintage: "",
-      rating: null,
+      rating: undefined,
       notes: "",
     },
   });
@@ -266,11 +269,20 @@ export default function SubmitGuesses() {
       producer: "",
       name: "",
       vintage: "",
-      rating: null,
+      rating: undefined,
       notes: "",
     });
     setSelectedVarietals([]);
   }, [selectedWineId, form]);
+
+  useEffect(() => {
+    if (tasting?.showRatingField === false) {
+      form.setValue('rating', undefined);
+    }
+    if (tasting?.showNotesField === false) {
+      form.setValue('notes', '');
+    }
+  }, [tasting?.showRatingField, tasting?.showNotesField, form]);
 
   // Update available regions when country changes
   useEffect(() => {
@@ -366,10 +378,20 @@ export default function SubmitGuesses() {
       return;
     }
 
-    submitGuessMutation.mutate({
+    const payload: Partial<InsertGuess> = {
       ...formData,
       varietals: selectedVarietals,
-    });
+    };
+
+    if (tasting?.showRatingField === false) {
+      payload.rating = undefined;
+    }
+
+    if (tasting?.showNotesField === false) {
+      payload.notes = undefined;
+    }
+
+    submitGuessMutation.mutate(payload);
   };
 
   // Handle tab change
@@ -649,50 +671,54 @@ export default function SubmitGuesses() {
                             </div>
                           </div>
 
-                          <FormField
-                            control={form.control}
-                            name="rating"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel className="flex items-center">
-                                  <Star className="h-4 w-4 mr-2 text-muted-foreground" />
-                                  Ihre Bewertung (88–100)
-                                </FormLabel>
-                                <FormControl>
-                                  <Input 
-                                    type="number" 
-                                    placeholder="92" 
-                                    min={88}
-                                    max={100}
-                                    value={field.value === null ? "" : field.value}
-                                    onChange={(e) => field.onChange(e.target.value === "" ? null : parseInt(e.target.value))}
-                                  />
-                                </FormControl>
-                                <FormDescription>
-                                  Bewerten Sie diesen Wein auf einer Skala von 88 bis 100
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
+                          {tasting?.showRatingField !== false && (
+                            <FormField
+                              control={form.control}
+                              name="rating"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="flex items-center">
+                                    <Star className="h-4 w-4 mr-2 text-muted-foreground" />
+                                    Ihre Bewertung (88–100)
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Input 
+                                      type="number" 
+                                      placeholder="92" 
+                                      min={88}
+                                      max={100}
+                                      value={field.value ?? ""}
+                                      onChange={(e) => field.onChange(e.target.value === "" ? undefined : parseInt(e.target.value))}
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    Bewerten Sie diesen Wein auf einer Skala von 88 bis 100
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          )}
 
-                          <FormField
-                            control={form.control}
-                            name="notes"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Verkostungsnotizen</FormLabel>
-                                <FormControl>
-                                  <Textarea 
-                                    placeholder="Aromen von Schwarzkirsche, Tabak und Zeder..." 
-                                    rows={2}
-                                    {...field} 
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
+                          {tasting?.showNotesField !== false && (
+                            <FormField
+                              control={form.control}
+                              name="notes"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Verkostungsnotizen</FormLabel>
+                                  <FormControl>
+                                    <Textarea 
+                                      placeholder="Aromen von Schwarzkirsche, Tabak und Zeder..." 
+                                      rows={2}
+                                      {...field} 
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          )}
                         </div>
                       </div>
 

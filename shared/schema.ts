@@ -34,6 +34,8 @@ export const tastings = pgTable("tastings", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   completedAt: timestamp("completed_at"),
   status: text("status").default("draft").notNull(), // draft, active, completed
+  showRatingField: boolean("show_rating_field").default(true).notNull(),
+  showNotesField: boolean("show_notes_field").default(true).notNull(),
 });
 
 export const insertTastingSchema = createInsertSchema(tastings).pick({

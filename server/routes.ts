@@ -581,6 +581,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update tasting feedback settings
+  app.patch("/api/tastings/:id/settings", ensureAuthenticated, async (req, res) => {
+    try {
+      const tastingId = parseInt(req.params.id, 10);
+
+      const tasting = await storage.getTasting(tastingId);
+      if (!tasting) {
+        return res.status(404).json({ error: "Tasting not found" });
+      }
+
+      if (tasting.hostId !== req.user!.id) {
+        return res.status(403).json({ error: "Only the host can update tasting settings" });
+      }
+
+      const schema = z.object({
+        showRatingField: z.boolean().optional(),
+        showNotesField: z.boolean().optional(),
+      });
+
+      const updates = schema.parse(req.body || {});
+      if (!('showRatingField' in updates) && !('showNotesField' in updates)) {
+        return res.status(400).json({ error: "No settings provided" });
+      }
+
+      const updated = await storage.updateTasting(tastingId, updates);
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: error.errors });
+      } else {
+        res.status(500).json({ error: (error as Error).message });
+      }
+    }
+  });
+
   // Create scoring rules for a tasting
   app.post("/api/tastings/:id/scoring", ensureAuthenticated, async (req, res) => {
     try {

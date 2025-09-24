@@ -208,7 +208,9 @@ export class MemStorage implements IStorage {
       completedAt: null,
       status: "draft",
       password: data.password || null,
-      isPublic: data.isPublic || false
+      isPublic: data.isPublic || false,
+      showRatingField: true,
+      showNotesField: true,
     };
     this.tastings.set(id, tasting);
 
@@ -993,7 +995,9 @@ export class DatabaseStorage implements IStorage {
           password: data.password || null,
           status: 'draft',
           createdAt: new Date(),
-          completedAt: null
+          completedAt: null,
+          showRatingField: true,
+          showNotesField: true,
         })
         .returning();
       
@@ -1074,6 +1078,8 @@ export class DatabaseStorage implements IStorage {
           createdAt: tastings.createdAt,
           completedAt: tastings.completedAt,
           status: tastings.status,
+          showRatingField: tastings.showRatingField,
+          showNotesField: tastings.showNotesField,
           requiresPassword: sql<boolean>`${tastings.password} IS NOT NULL`,
           hostName: users.name,
           hostCompany: users.company
@@ -1087,7 +1093,9 @@ export class DatabaseStorage implements IStorage {
         ...t,
         requiresPassword: !!t.password,
         hostName: t.hostName || null,
-        hostCompany: t.hostCompany || null
+        hostCompany: t.hostCompany || null,
+        showRatingField: t.showRatingField ?? true,
+        showNotesField: t.showNotesField ?? true,
       }));
 
       console.log('[getAllTastings] Mapped results:', mappedResults);

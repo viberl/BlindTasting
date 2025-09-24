@@ -24,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import RankedAvatar from "@/components/tasting/ranked-avatar";
 
 interface Participant {
@@ -58,6 +59,8 @@ interface Tasting {
   createdAt: string;
   completedAt: string | null;
   password?: string;
+  showRatingField: boolean;
+  showNotesField: boolean;
 }
 
 interface Wine {
@@ -396,6 +399,7 @@ export default function TastingDetailPage() {
   });
   const [hasScoringRules, setHasScoringRules] = useState(false);
   const [leaderboardVisibility, setLeaderboardVisibility] = useState(3); // 0 = Alle anzeigen
+  const [feedbackSettings, setFeedbackSettings] = useState({ showRatingField: true, showNotesField: true });
   const { data: scoringRules, isLoading: isScoringRulesLoading } = useQuery<ScoringRule | null>({
     queryKey: [`/api/tastings/${tastingId}/scoring`],
     queryFn: async () => {
@@ -452,6 +456,15 @@ export default function TastingDetailPage() {
       setHasScoringRules(false);
     }
   }, [scoringRules]);
+
+  useEffect(() => {
+    if (tasting) {
+      setFeedbackSettings({
+        showRatingField: tasting.showRatingField ?? true,
+        showNotesField: tasting.showNotesField ?? true,
+      });
+    }
+  }, [tasting?.showRatingField, tasting?.showNotesField]);
 
   // Flights-Query mit Debug-Log
   const { data: flights, isLoading: isFlightsLoading, refetch: refetchFlights } = useQuery<Flight[]>({
@@ -673,6 +686,32 @@ export default function TastingDetailPage() {
     },
   });
 
+  const updateFeedbackSettingsMutation = useMutation({
+    mutationFn: async (payload: Partial<{ showRatingField: boolean; showNotesField: boolean }>) => {
+      const res = await apiRequest('PATCH', `/api/tastings/${tastingId}/settings`, payload);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Feedback-Einstellungen konnten nicht gespeichert werden');
+      }
+      return res.json();
+    },
+    onSuccess: (updated: Tasting) => {
+      setFeedbackSettings({
+        showRatingField: updated.showRatingField ?? true,
+        showNotesField: updated.showNotesField ?? true,
+      });
+      queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/participants`] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Fehler',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
   const persistScoringConfig = (
     configuration: PointsConfigurationState,
     forceCreate = false
@@ -697,6 +736,7 @@ export default function TastingDetailPage() {
   };
 
   const scoringButtonsDisabled = !canEditScoring || saveScoringRulesMutation.isPending || isScoringRulesLoading;
+  const canEditFeedback = Boolean(tasting && user && tasting.hostId === user.id && ['draft', 'active'].includes((tasting.status || '').toLowerCase()));
 
   const updatePointsConfiguration = (partial: Partial<PointsConfigurationState>) => {
     if (!canEditScoring) {
@@ -713,6 +753,15 @@ export default function TastingDetailPage() {
       }
       return prev;
     });
+  };
+
+  const handleFeedbackSettingChange = (
+    key: 'showRatingField' | 'showNotesField',
+    value: boolean
+  ) => {
+    if (!canEditFeedback) return;
+    setFeedbackSettings(prev => ({ ...prev, [key]: value }));
+    updateFeedbackSettingsMutation.mutate({ [key]: value });
   };
 
   const previousStatusRef = useRef<string | undefined>(undefined);
@@ -1667,6 +1716,47 @@ export default function TastingDetailPage() {
                       </div>
                     ) : (
                       <p className="text-sm text-gray-500">Punktesystem wird vom Host festgelegt.</p>
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-medium mb-2">Teilnehmer-Eingaben</h3>
+                    <p className="text-sm text-gray-500 mb-4">
+                      Bestimme, welche Felder Teilnehmer beim Abgeben ihrer Tipps sehen.
+                    </p>
+                    <div className="space-y-3">
+                      <label className="flex items-start gap-3">
+                        <Checkbox
+                          checked={feedbackSettings.showRatingField}
+                          onCheckedChange={(checked) => handleFeedbackSettingChange('showRatingField', Boolean(checked))}
+                          disabled={!canEditFeedback || updateFeedbackSettingsMutation.isPending}
+                          className="mt-1"
+                        />
+                        <div>
+                          <p className="font-medium">Feld „Ihre Bewertung“ anzeigen</p>
+                          <p className="text-xs text-gray-500 max-w-md">
+                            Teilnehmer können eine Bewertung zwischen 88 und 100 vergeben.
+                          </p>
+                        </div>
+                      </label>
+                      <label className="flex items-start gap-3">
+                        <Checkbox
+                          checked={feedbackSettings.showNotesField}
+                          onCheckedChange={(checked) => handleFeedbackSettingChange('showNotesField', Boolean(checked))}
+                          disabled={!canEditFeedback || updateFeedbackSettingsMutation.isPending}
+                          className="mt-1"
+                        />
+                        <div>
+                          <p className="font-medium">Feld „Verkostungsnotizen“ anzeigen</p>
+                          <p className="text-xs text-gray-500 max-w-md">
+                            Teilnehmer können ihre Eindrücke als Freitext festhalten.
+                          </p>
+                        </div>
+                      </label>
+                    </div>
+                    {!canEditFeedback && (
+                      <p className="text-xs text-gray-400 mt-3">
+                        Die Felder können nach Start der Verkostung nicht mehr angepasst werden.
+                      </p>
                     )}
                   </div>
                   <div>
