@@ -12,28 +12,42 @@
     {
       "idx": 1,
       "version": "7",
-      "when": 1746631144424,
-      "tag": "0001_slimy_flatman",
+      "when": 1746522214852,
+      "tag": "0001_add_vinaturel_wines",
       "breakpoints": true
     },
     {
       "idx": 2,
       "version": "7",
-      "when": 1758737679327,
-      "tag": "0002_add_article_number",
+      "when": 1746522214853,
+      "tag": "0001_enable_cascade_deletes",
       "breakpoints": true
     },
     {
       "idx": 3,
       "version": "7",
-      "when": 1758737679327,
-      "tag": "0003_review_overrides",
+      "when": 1746522214854,
+      "tag": "0001_slimy_flatman",
       "breakpoints": true
     },
     {
       "idx": 4,
       "version": "7",
-      "when": 1758737679327,
+      "when": 1746522214855,
+      "tag": "0002_add_article_number",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1746522214856,
+      "tag": "0003_review_overrides",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1746522214857,
       "tag": "0004_add_tasting_feedback_settings",
       "breakpoints": true
     }

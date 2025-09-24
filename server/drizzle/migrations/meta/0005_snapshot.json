@@ -1,6 +1,6 @@
 {
-  "id": "380a4d0f-daaf-4b9c-acfb-b63ddaf3b19d",
-  "prevId": "2b7070f9-7342-4a7e-8e63-f73c92b0f607",
+  "id": "ce742869-a571-4ded-ada4-9efb75ac6a13",
+  "prevId": "29e97594-dc97-44a8-a56f-4fe6d77a6569",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -47,6 +47,12 @@
         },
         "completed_at": {
           "name": "completed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "review_approved_at": {
+          "name": "review_approved_at",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": false
@@ -157,6 +163,30 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "override_score": {
+          "name": "override_score",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "override_by": {
+          "name": "override_by",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "override_reason": {
+          "name": "override_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "override_flags": {
+          "name": "override_flags",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
@@ -721,6 +751,12 @@
           "primaryKey": false,
           "notNull": false,
           "default": "now()"
+        },
+        "article_number": {
+          "name": "article_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
