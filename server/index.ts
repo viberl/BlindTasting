@@ -9,6 +9,8 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { setupAuth } from "./auth";
 import { scheduleDailyVinaturelCsvImport } from "./jobs/vinaturel-csv-scheduler";
+import { db } from "./db";
+import { sql } from "drizzle-orm";
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -64,6 +66,13 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  try {
+    await db.execute(sql`ALTER TABLE "tastings" ADD COLUMN IF NOT EXISTS "show_rating_field" boolean DEFAULT true NOT NULL`);
+    await db.execute(sql`ALTER TABLE "tastings" ADD COLUMN IF NOT EXISTS "show_notes_field" boolean DEFAULT true NOT NULL`);
+  } catch (error) {
+    console.error('Failed to ensure tasting feedback columns exist:', error);
+  }
+
   const server = await registerRoutes(app);
 
   // Error handling middleware
