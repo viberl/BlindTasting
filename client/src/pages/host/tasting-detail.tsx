@@ -22,7 +22,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, type KeyboardEvent } from "react";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import RankedAvatar from "@/components/tasting/ranked-avatar";
@@ -188,6 +188,8 @@ export default function TastingDetailPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [inviteEmail, setInviteEmail] = useState("");
+  const [flightNameDrafts, setFlightNameDrafts] = useState<Record<number, string>>({});
+  const [flightNameSavingId, setFlightNameSavingId] = useState<number | null>(null);
 
   // Typ für Teilnehmer mit Benutzerdaten
   interface ParticipantWithUser extends Participant {
@@ -840,6 +842,72 @@ export default function TastingDetailPage() {
     }
   });
 
+  const updateFlightDetailsMutation = useMutation({
+    mutationFn: async ({ flightId, name }: { flightId: number; name: string }) => {
+      setFlightNameSavingId(flightId);
+      const res = await apiRequest('PATCH', `/api/flights/${flightId}`, { name });
+      return res.json();
+    },
+    onSuccess: async (_data, variables) => {
+      setFlightNameDrafts(prev => {
+        const next = { ...prev };
+        delete next[variables.flightId];
+        return next;
+      });
+      await queryClient.invalidateQueries({ queryKey: [`/api/tastings/${tastingId}/flights`] });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Fehler', description: error.message, variant: 'destructive' });
+    },
+    onSettled: () => {
+      setFlightNameSavingId(null);
+    }
+  });
+
+  const handleFlightNameChange = (flightId: number, value: string) => {
+    setFlightNameDrafts(prev => ({
+      ...prev,
+      [flightId]: value,
+    }));
+  };
+
+  const resetFlightNameDraft = (flightId: number) => {
+    setFlightNameDrafts(prev => {
+      if (!(flightId in prev)) return prev;
+      const next = { ...prev };
+      delete next[flightId];
+      return next;
+    });
+  };
+
+  const commitFlightName = (flight: Flight) => {
+    const defaultName = `Flight ${flight.orderIndex + 1}`;
+    const draft = flightNameDrafts[flight.id];
+    const rawValue = draft !== undefined ? draft : (flight.name !== defaultName ? flight.name : '');
+    const trimmed = rawValue.trim();
+    const nextName = trimmed.length > 0 ? trimmed : defaultName;
+
+    if (nextName === flight.name) {
+      resetFlightNameDraft(flight.id);
+      return;
+    }
+
+    updateFlightDetailsMutation.mutate({ flightId: flight.id, name: nextName });
+  };
+
+  const handleFlightNameKeyDown = (event: KeyboardEvent<HTMLInputElement>, flight: Flight) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      commitFlightName(flight);
+      event.currentTarget.blur();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      resetFlightNameDraft(flight.id);
+      event.currentTarget.blur();
+    }
+  };
+
   const removeInviteMutation = useMutation({
     mutationFn: async (email: string) => {
       const res = await apiRequest("DELETE", `/api/tastings/${tastingId}/invites/${encodeURIComponent(email)}`);
@@ -1135,6 +1203,12 @@ export default function TastingDetailPage() {
   };
 
   // Weinlabel inkl. Flight: (Flight N - Wein A)
+  const formatFlightDisplayName = (orderIndex: number, name?: string | null) => {
+    const defaultName = `Flight ${orderIndex + 1}`;
+    const trimmed = (name ?? '').trim();
+    return trimmed && trimmed !== defaultName ? `${defaultName} – ${trimmed}` : defaultName;
+  };
+
   const formatWineLabel = (wineId?: number, letterCode?: string) => {
     try {
       if (!flights || !wineId) return letterCode ? `(Wein ${letterCode})` : '';
@@ -1144,6 +1218,109 @@ export default function TastingDetailPage() {
       }
       return letterCode ? `(Wein ${letterCode})` : '';
     } catch { return letterCode ? `(Wein ${letterCode})` : ''; }
+  };
+
+  const renderRecognitionHighlight = (title: string, wine: any, tone: 'positive' | 'negative') => {
+    const containerTone = tone === 'positive'
+      ? 'border-emerald-100 bg-emerald-50/70'
+      : 'border-amber-100 bg-amber-50/70';
+    const accentText = tone === 'positive' ? 'text-emerald-700' : 'text-amber-700';
+    const badgeTone = tone === 'positive'
+      ? 'border-emerald-200 text-emerald-700'
+      : 'border-amber-200 text-amber-700';
+
+    return (
+      <div className={`rounded-xl border p-4 shadow-sm ${containerTone}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>
+            <p className={`mt-2 text-sm font-semibold ${accentText}`}>
+              {wine ? `${formatWineLabel(wine.wineId, wine.letterCode)} ${wine.producer} ${wine.name}` : 'Noch keine Auswertung'}
+            </p>
+            <p className="mt-1 text-xs text-slate-600">
+              {wine ? 'Trefferquote über alle Teilnehmer*innen' : 'Sobald ausreichend Tipps vorhanden sind, erscheint hier das Highlight.'}
+            </p>
+          </div>
+          <div className={`rounded-full bg-white/70 p-2 ${accentText}`}>
+            <Wine className="h-5 w-5" />
+          </div>
+        </div>
+        {wine && (
+          <Badge variant="outline" className={`mt-3 bg-white/70 px-2 py-1 ${badgeTone}`}>
+            ∅ {Number(wine.avgScore).toFixed(2)} Pkt
+          </Badge>
+        )}
+      </div>
+    );
+  };
+
+  const renderRatingHighlight = (title: string, wine: any, tone: 'positive' | 'negative') => {
+    const hasRating = wine && typeof wine.avgRating === 'number' && wine.count > 0;
+    const containerTone = tone === 'positive'
+      ? 'border-sky-100 bg-sky-50/70'
+      : 'border-rose-100 bg-rose-50/70';
+    const accentText = tone === 'positive' ? 'text-sky-700' : 'text-rose-700';
+    const badgeTone = tone === 'positive'
+      ? 'border-sky-200 text-sky-700'
+      : 'border-rose-200 text-rose-700';
+
+    return (
+      <div className={`rounded-xl border p-4 shadow-sm ${containerTone}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>
+            <p className={`mt-2 text-sm font-semibold ${accentText}`}>
+              {hasRating ? `${formatWineLabel(wine.wineId, wine.letterCode)} ${wine.producer} ${wine.name}` : 'Noch keine Bewertungen'}
+            </p>
+            <p className="mt-1 text-xs text-slate-600">
+              {hasRating ? `${wine.count} Bewertung${wine.count === 1 ? '' : 'en'} eingegangen` : 'Sobald Bewertungen vorliegen, werden sie hier angezeigt.'}
+            </p>
+          </div>
+          <div className={`rounded-full bg-white/70 p-2 ${accentText}`}>
+            <Trophy className="h-5 w-5" />
+          </div>
+        </div>
+        {hasRating && (
+          <Badge variant="outline" className={`mt-3 bg-white/70 px-2 py-1 ${badgeTone}`}>
+            ∅ {Number(wine.avgRating).toFixed(2)} ({wine.count})
+          </Badge>
+        )}
+      </div>
+    );
+  };
+
+  const renderTopScorersSection = (entries: any[]) => {
+    const sortedEntries = (entries || []).sort((a, b) => a.orderIndex - b.orderIndex);
+    return (
+      <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 shadow-sm">
+        <div className="flex items-center gap-2">
+          <Trophy className="h-4 w-4 text-slate-500" />
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Beste*r Verkoster*in je Flight</p>
+        </div>
+        {sortedEntries.length === 0 ? (
+          <p className="mt-3 text-sm text-slate-600">Noch keine Ergebnisse vorhanden.</p>
+        ) : (
+          <div className="mt-3 space-y-2">
+            {sortedEntries.map((entry) => (
+              <div key={entry.flightId} className="flex items-center justify-between rounded-lg bg-white/80 px-3 py-2 shadow-sm">
+                <div>
+                  <p className="text-sm font-medium text-slate-900">{formatFlightDisplayName(entry.orderIndex, entry.name)}</p>
+                  <p className="text-xs text-slate-500">
+                    {entry.topScorer ? entry.topScorer.participantName : 'Keine Auswertung'}
+                  </p>
+                </div>
+                <Badge
+                  variant="outline"
+                  className={entry.topScorer ? 'border-emerald-200 bg-emerald-50/80 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-500'}
+                >
+                  {entry.topScorer ? `${entry.topScorer.totalScore} Pkt` : '—'}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   
@@ -1247,7 +1424,7 @@ export default function TastingDetailPage() {
           {!allFlightsCompleted && lastCompletedFlight && lastCompletedStats && (
             <Card>
               <CardHeader>
-                <CardTitle>Zwischenergebnis – {lastCompletedFlight.name}</CardTitle>
+                <CardTitle>Zwischenergebnis – {formatFlightDisplayName(lastCompletedFlight.orderIndex, lastCompletedFlight.name)}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
                 <div>
@@ -1278,24 +1455,18 @@ export default function TastingDetailPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Endergebnis‑Statistiken</CardTitle>
+                <CardDescription>Highlights deiner Verkostung auf einen Blick.</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <div>
-                  <span className="font-medium">Am besten erkannt (gesamt): </span>
-                  {finalStats.bestRecognizedWine ? `${formatWineLabel(finalStats.bestRecognizedWine.wineId, finalStats.bestRecognizedWine.letterCode)} ${finalStats.bestRecognizedWine.producer} ${finalStats.bestRecognizedWine.name} – ∅ ${Number(finalStats.bestRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+              <CardContent className="space-y-5">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {renderRecognitionHighlight('Am besten erkannt (gesamt)', finalStats.bestRecognizedWine, 'positive')}
+                  {renderRecognitionHighlight('Am schlechtesten erkannt (gesamt)', finalStats.worstRecognizedWine, 'negative')}
                 </div>
-                <div>
-                  <span className="font-medium">Am schlechtesten erkannt (gesamt): </span>
-                  {finalStats.worstRecognizedWine ? `${formatWineLabel(finalStats.worstRecognizedWine.wineId, finalStats.worstRecognizedWine.letterCode)} ${finalStats.worstRecognizedWine.producer} ${finalStats.worstRecognizedWine.name} – ∅ ${Number(finalStats.worstRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {renderRatingHighlight('Bestbewerteter Wein', finalStats.bestRatedWine && finalStats.bestRatedWine.count > 0 ? finalStats.bestRatedWine : null, 'positive')}
+                  {renderRatingHighlight('Schlechtester Wein (Bewertung)', finalStats.worstRatedWine && finalStats.worstRatedWine.count > 0 ? finalStats.worstRatedWine : null, 'negative')}
                 </div>
-                <div>
-                  <span className="font-medium">Bestbewerteter Wein: </span>
-                  {finalStats.bestRatedWine && finalStats.bestRatedWine.count > 0 ? `${formatWineLabel(finalStats.bestRatedWine.wineId, finalStats.bestRatedWine.letterCode)} ${finalStats.bestRatedWine.producer} ${finalStats.bestRatedWine.name} – ∅ ${Number(finalStats.bestRatedWine.avgRating).toFixed(2)} (${finalStats.bestRatedWine.count})` : '—'}
-                </div>
-                <div>
-                  <span className="font-medium">Schlechtester Wein (Bewertung): </span>
-                  {finalStats.worstRatedWine && finalStats.worstRatedWine.count > 0 ? `${formatWineLabel(finalStats.worstRatedWine.wineId, finalStats.worstRatedWine.letterCode)} ${finalStats.worstRatedWine.producer} ${finalStats.worstRatedWine.name} – ∅ ${Number(finalStats.worstRatedWine.avgRating).toFixed(2)} (${finalStats.worstRatedWine.count})` : '—'}
-                </div>
+                {renderTopScorersSection(finalStats.perFlightTopScorers || [])}
               </CardContent>
             </Card>
           )}
@@ -1306,38 +1477,68 @@ export default function TastingDetailPage() {
           ) : flights && flights.length > 0 ? (
             <div className="space-y-6">
               <div className="grid gap-6 md:grid-cols-2">
-                {flights.map((flight: any) => (
-                  <Card key={flight.id} className="overflow-hidden">
-                    <CardHeader className="bg-gray-50">
-                      <div className="flex justify-between items-center">
-                        <CardTitle className="text-xl">Flight {flight.orderIndex + 1}</CardTitle>
-                        <div className="flex items-center gap-2">
-                          <Badge variant={flight.completedAt ? 'secondary' : flight.startedAt ? 'default' : 'outline'}>
-                            {flight.completedAt ? 'Abgeschlossen' : flight.startedAt ? 'Im Gange' : 'Nicht gestartet'}
-                          </Badge>
-                          {isHost && !flight.startedAt && !flight.completedAt && (
-                            <button
-                              className="h-6 w-6 rounded-full bg-red-100 text-red-600 hover:bg-red-200 flex items-center justify-center"
-                              title="Flight entfernen"
-                              onClick={() => deleteFlightMutation.mutate(flight.id)}
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
+                {flights.map((flight: any) => {
+                  const defaultFlightName = `Flight ${flight.orderIndex + 1}`;
+                  const displayName = formatFlightDisplayName(flight.orderIndex, flight.name);
+                  const hasCustomFlightName = displayName !== defaultFlightName;
+                  const draftName = flightNameDrafts[flight.id] ?? (hasCustomFlightName ? flight.name : '');
+
+                  return (
+                    <Card key={flight.id} className="overflow-hidden">
+                      <CardHeader className="bg-gray-50">
+                        <div className="flex flex-col gap-3">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="flex-1">
+                              <CardTitle className="text-xl">Flight {flight.orderIndex + 1}</CardTitle>
+                              {isHost && !flight.startedAt && !flight.completedAt ? (
+                                <div className="mt-2 flex items-center gap-2">
+                                  <Input
+                                    value={draftName}
+                                    onChange={(event) => handleFlightNameChange(flight.id, event.target.value)}
+                                    onBlur={() => commitFlightName(flight)}
+                                    onKeyDown={(event) => handleFlightNameKeyDown(event, flight)}
+                                    placeholder="Name des Flights (optional)"
+                                    className="h-8 w-full text-sm sm:w-64"
+                                    disabled={flightNameSavingId === flight.id}
+                                  />
+                                  {flightNameSavingId === flight.id && (
+                                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                  )}
+                                </div>
+                              ) : (
+                                hasCustomFlightName && (
+                                  <p className="mt-1 text-sm text-muted-foreground">{displayName}</p>
+                                )
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Badge variant={flight.completedAt ? 'secondary' : flight.startedAt ? 'default' : 'outline'}>
+                                {flight.completedAt ? 'Abgeschlossen' : flight.startedAt ? 'Im Gange' : 'Nicht gestartet'}
+                              </Badge>
+                              {isHost && !flight.startedAt && !flight.completedAt && (
+                                <button
+                                  className="h-6 w-6 rounded-full bg-red-100 text-red-600 hover:bg-red-200 flex items-center justify-center"
+                                  title="Flight entfernen"
+                                  onClick={() => deleteFlightMutation.mutate(flight.id)}
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-sm text-muted-foreground flex justify-between items-center px-6 pt-1">
+                          <span>{flight.wines?.length || 0} Weine</span>
+                          {timeLeft !== null && timerFlightId === flight.id && (
+                            <div className="flex items-center text-amber-600 font-medium">
+                              <AlarmClock className="h-4 w-4 mr-1 animate-pulse" />
+                              <span>
+                                {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
+                              </span>
+                            </div>
                           )}
                         </div>
-                      </div>
-                      <div className="text-sm text-muted-foreground flex justify-between items-center px-6 pt-1">
-                        <span>{flight.wines?.length || 0} Weine</span>
-                        {timeLeft !== null && timerFlightId === flight.id && (
-                          <div className="flex items-center text-amber-600 font-medium">
-                            <AlarmClock className="h-4 w-4 mr-1 animate-pulse" />
-                            <span>
-                              {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </CardHeader>
+                      </CardHeader>
                     <CardContent className="pt-6">
                       <FlightWineList flight={flight} isHost={isHost} />
 
@@ -1385,7 +1586,8 @@ export default function TastingDetailPage() {
                       )}
                     </CardContent>
                   </Card>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : (

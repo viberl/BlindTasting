@@ -760,6 +760,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update flight (e.g., rename)
+  app.patch("/api/flights/:id", ensureAuthenticated, async (req, res) => {
+    const flightId = parseInt(req.params.id, 10);
+    if (Number.isNaN(flightId)) {
+      return res.status(400).json({ error: 'Ungültige Flight-ID' });
+    }
+
+    try {
+      const flightRows = await db
+        .select()
+        .from(flights)
+        .where(eq(flights.id, flightId))
+        .limit(1);
+
+      const flight = flightRows[0];
+      if (!flight) {
+        return res.status(404).json({ error: 'Flight nicht gefunden' });
+      }
+
+      const tasting = await storage.getTasting(flight.tastingId);
+      if (!tasting) {
+        return res.status(404).json({ error: 'Verkostung nicht gefunden' });
+      }
+
+      if (!req.user || tasting.hostId !== req.user.id) {
+        return res.status(403).json({ error: 'Nur der Host kann den Flight bearbeiten.' });
+      }
+
+      const updates: Partial<{ name: string; timeLimit: number }> = {};
+
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'name')) {
+        if (typeof req.body.name !== 'string') {
+          return res.status(400).json({ error: 'Ungültiger Name' });
+        }
+        const trimmed = req.body.name.trim();
+        updates.name = trimmed.length > 0 ? trimmed : `Flight ${flight.orderIndex + 1}`;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'timeLimit')) {
+        const parsed = Number(req.body.timeLimit);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          return res.status(400).json({ error: 'Ungültiges Zeitlimit' });
+        }
+        updates.timeLimit = Math.floor(parsed);
+      }
+
+      const nameChanged = updates.name !== undefined && updates.name !== flight.name;
+      const timeChanged = updates.timeLimit !== undefined && updates.timeLimit !== flight.timeLimit;
+
+      if (!nameChanged && !timeChanged) {
+        return res.json({ ...flight });
+      }
+
+      const updatedFlight = await storage.updateFlight(flightId, updates);
+      res.json(updatedFlight);
+    } catch (error) {
+      console.error('Fehler beim Aktualisieren des Flights:', error);
+      res.status(500).json({ error: 'Flight konnte nicht aktualisiert werden.' });
+    }
+  });
+
   // Get flights for a tasting
   app.get("/api/tastings/:tastingId/flights", ensureAuthenticated, async (req, res) => {
     const tastingId = parseInt(req.params.tastingId);
@@ -2038,6 +2099,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const bestRatedWine = ratingRows.length ? ratingRows.reduce((a, b) => ((a.avgRating ?? -Infinity) >= (b.avgRating ?? -Infinity) ? a : b)) : null;
       const worstRatedWine = ratingRows.length ? ratingRows.reduce((a, b) => ((a.avgRating ?? Infinity) <= (b.avgRating ?? Infinity) ? a : b)) : null;
 
+      // Top scorer per flight
+      const perFlightTopRes = await db.execute(sql`
+        WITH participant_scores AS (
+          SELECT f.id as "flightId",
+                 f.order_index as "orderIndex",
+                 f.name as "flightName",
+                 p.id as "participantId",
+                 p.name as "participantName",
+                 COALESCE(SUM(g.score), 0)::int as "totalScore"
+          FROM flights f
+          LEFT JOIN wines w ON w.flight_id = f.id
+          LEFT JOIN guesses g ON g.wine_id = w.id
+          LEFT JOIN participants p ON p.id = g.participant_id
+          WHERE f.tasting_id = ${tastingId}
+          GROUP BY f.id, f.order_index, f.name, p.id, p.name
+        )
+        SELECT "flightId", "orderIndex", "flightName", "participantId", "participantName", "totalScore"
+        FROM (
+          SELECT *,
+                 ROW_NUMBER() OVER (PARTITION BY "flightId" ORDER BY "totalScore" DESC, "participantName" ASC) as rn
+          FROM participant_scores
+          WHERE "participantId" IS NOT NULL
+        ) ranked
+        WHERE rn = 1
+        ORDER BY "orderIndex";
+      `);
+      const perFlightTopRows = (perFlightTopRes.rows as any[]) || [];
+      const sortedFlights = [...flightsList].sort((a, b) => a.orderIndex - b.orderIndex);
+      const perFlightTopScorers = sortedFlights.map(flight => {
+        const top = perFlightTopRows.find(row => row.flightId === flight.id);
+        return {
+          flightId: flight.id,
+          orderIndex: flight.orderIndex,
+          name: flight.name,
+          topScorer: top ? {
+            participantId: top.participantId,
+            participantName: top.participantName,
+            totalScore: top.totalScore,
+          } : null,
+        };
+      });
+
       return res.json({
         tastingId,
         totalParticipants,
@@ -2045,6 +2148,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         worstRecognizedWine,
         bestRatedWine,
         worstRatedWine,
+        perFlightTopScorers,
       });
     } catch (error) {
       console.error('Error fetching final stats:', error);

@@ -81,6 +81,7 @@ export interface IStorage {
     timeLimit: number;
   }): Promise<Flight>;
   getFlightsByTasting(tastingId: number): Promise<Flight[]>;
+  updateFlight(id: number, update: Partial<Pick<Flight, 'name' | 'orderIndex' | 'timeLimit'>>): Promise<Flight>;
   updateFlightTimes(id: number, startedAt?: Date, completedAt?: Date): Promise<Flight>;
   
   // Wine methods
@@ -450,6 +451,47 @@ export class MemStorage implements IStorage {
       console.error('Database error in getFlightsByTasting:', error);
       throw error;
     }
+  }
+
+  async updateFlight(id: number, update: Partial<Pick<Flight, 'name' | 'orderIndex' | 'timeLimit'>>): Promise<Flight> {
+    const allowedUpdates: Partial<{ name: string; orderIndex: number; timeLimit: number }> = {};
+
+    if (update.name !== undefined) {
+      allowedUpdates.name = update.name;
+    }
+    if (update.orderIndex !== undefined) {
+      allowedUpdates.orderIndex = update.orderIndex;
+    }
+    if (update.timeLimit !== undefined) {
+      allowedUpdates.timeLimit = update.timeLimit;
+    }
+
+    const existing = await db
+      .select()
+      .from(flights)
+      .where(eq(flights.id, id))
+      .limit(1);
+
+    const current = existing[0];
+    if (!current) {
+      throw new Error(`Flight with id ${id} not found`);
+    }
+
+    if (Object.keys(allowedUpdates).length === 0) {
+      return current;
+    }
+
+    const result = await db
+      .update(flights)
+      .set(allowedUpdates)
+      .where(eq(flights.id, id))
+      .returning();
+
+    if (!result[0]) {
+      throw new Error(`Flight with id ${id} not found`);
+    }
+
+    return result[0];
   }
 
   async updateFlightTimes(id: number, startedAt?: Date, completedAt?: Date): Promise<Flight> {
@@ -1778,6 +1820,47 @@ export class DatabaseStorage implements IStorage {
       console.error('Database error in getFlightsByTasting:', error);
       throw error;
     }
+  }
+
+  async updateFlight(id: number, update: Partial<Pick<Flight, 'name' | 'orderIndex' | 'timeLimit'>>): Promise<Flight> {
+    const allowedUpdates: Partial<{ name: string; orderIndex: number; timeLimit: number }> = {};
+
+    if (update.name !== undefined) {
+      allowedUpdates.name = update.name;
+    }
+    if (update.orderIndex !== undefined) {
+      allowedUpdates.orderIndex = update.orderIndex;
+    }
+    if (update.timeLimit !== undefined) {
+      allowedUpdates.timeLimit = update.timeLimit;
+    }
+
+    const existing = await db
+      .select()
+      .from(flights)
+      .where(eq(flights.id, id))
+      .limit(1);
+
+    const current = existing[0];
+    if (!current) {
+      throw new Error(`Flight with id ${id} not found`);
+    }
+
+    if (Object.keys(allowedUpdates).length === 0) {
+      return current;
+    }
+
+    const result = await db
+      .update(flights)
+      .set(allowedUpdates)
+      .where(eq(flights.id, id))
+      .returning();
+
+    if (!result[0]) {
+      throw new Error(`Flight with id ${id} not found`);
+    }
+
+    return result[0];
   }
 
   async updateFlightTimes(id: number, startedAt?: Date, completedAt?: Date): Promise<Flight> {
