@@ -2156,6 +2156,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/tastings/:id/flight-top-scorers', ensureAuthenticated, async (req, res) => {
+    try {
+      const tastingId = parseInt(req.params.id, 10);
+      if (isNaN(tastingId)) return res.status(400).json({ error: 'Invalid tasting id' });
+
+      const tasting = await storage.getTasting(tastingId);
+      if (!tasting) return res.status(404).json({ error: 'Tasting not found' });
+
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      const isHost = userId === tasting.hostId;
+      if (!isHost) {
+        const participant = await storage.getParticipant(tastingId, userId);
+        if (!participant) {
+          return res.status(403).json({ error: 'Only participants can view flight top scorers' });
+        }
+      }
+
+      const flightsList = await storage.getFlightsByTasting(tastingId);
+      if (!flightsList || flightsList.length === 0) {
+        return res.json({ tastingId, flights: [] });
+      }
+
+      const perFlightTopRes = await db.execute(sql`
+        WITH participant_scores AS (
+          SELECT 
+            f.id AS "flightId",
+            f.order_index AS "orderIndex",
+            f.name AS "flightName",
+            p.id AS "participantId",
+            u.id AS "userId",
+            u.name AS "participantName",
+            u.company AS "participantCompany",
+            u.profile_image AS "participantProfileImage",
+            COALESCE(SUM(g.score), 0)::int AS "totalScore"
+          FROM flights f
+          JOIN participants p ON p.tasting_id = f.tasting_id
+          JOIN users u ON u.id = p.user_id
+          LEFT JOIN wines w ON w.flight_id = f.id
+          LEFT JOIN guesses g ON g.wine_id = w.id AND g.participant_id = p.id
+          WHERE f.tasting_id = ${tastingId}
+          GROUP BY f.id, f.order_index, f.name, p.id, u.id, u.name, u.company, u.profile_image
+        )
+        SELECT "flightId", "orderIndex", "flightName", "participantId", "userId", "participantName", "participantCompany", "participantProfileImage", "totalScore"
+        FROM (
+          SELECT *, ROW_NUMBER() OVER (PARTITION BY "flightId" ORDER BY "totalScore" DESC, "participantName" ASC) AS rn
+          FROM participant_scores
+        ) ranked
+        WHERE rn = 1
+        ORDER BY "orderIndex"
+      `);
+
+      const perFlightTopRows = (perFlightTopRes.rows as any[]) || [];
+      const sortedFlights = [...flightsList].sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
+
+      const flightsWithTopScorers = sortedFlights.map((flight) => {
+        const top = perFlightTopRows.find(row => row.flightId === flight.id);
+        return {
+          flightId: flight.id,
+          orderIndex: flight.orderIndex,
+          name: flight.name,
+          topScorer: top ? {
+            participantId: top.participantId,
+            userId: top.userId,
+            name: top.participantName,
+            company: top.participantCompany,
+            profileImage: top.participantProfileImage,
+            totalScore: top.totalScore,
+          } : null,
+        };
+      });
+
+      return res.json({ tastingId, flights: flightsWithTopScorers });
+    } catch (error) {
+      console.error('Error fetching flight top scorers:', error);
+      return res.status(500).json({ error: 'Server error' });
+    }
+  });
+
   // Ändere von API- zu Datenbank-Suche
   app.get('/api/wines/search', async (req, res) => {
     const { q } = req.query;

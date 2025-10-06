@@ -1297,6 +1297,8 @@ export class DatabaseStorage implements IStorage {
           hostId: tastings.hostId,
           isPublic: tastings.isPublic,
           completedAt: tastings.completedAt,
+          showRatingField: tastings.showRatingField,
+          showNotesField: tastings.showNotesField,
           tastingPassword: tastings.password, // Renamed to avoid ambiguity
           requiresPassword: sql<boolean>`${tastings.password} IS NOT NULL`,
           hostName: users.name,
@@ -1325,6 +1327,8 @@ export class DatabaseStorage implements IStorage {
           t.id, t.name, t.host_id AS "hostId", t.is_public AS "isPublic",
           t.password AS "tastingPassword", t.created_at AS "createdAt",
           t.completed_at AS "completedAt", t.status,
+          t.show_rating_field AS "showRatingField",
+          t.show_notes_field AS "showNotesField",
           (t.password IS NOT NULL) AS "requiresPassword",
           u.name AS "hostName", u.company AS "hostCompany"
         FROM tastings t
@@ -1358,6 +1362,8 @@ export class DatabaseStorage implements IStorage {
             createdAt: tastings.createdAt,
             completedAt: tastings.completedAt,
             status: tastings.status,
+            showRatingField: tastings.showRatingField,
+            showNotesField: tastings.showNotesField,
             requiresPassword: sql<boolean>`${tastings.password} IS NOT NULL`,
             hostName: users.name,
             hostCompany: users.company,
@@ -1390,6 +1396,8 @@ export class DatabaseStorage implements IStorage {
           createdAt: tastings.createdAt,
           completedAt: tastings.completedAt,
           status: tastings.status,
+          showRatingField: tastings.showRatingField,
+          showNotesField: tastings.showNotesField,
           requiresPassword: sql<boolean>`${tastings.password} IS NOT NULL`,
           hostName: users.name,
           hostCompany: users.company,
@@ -1588,6 +1596,8 @@ export class DatabaseStorage implements IStorage {
           isPublic: tastings.isPublic,
           completedAt: tastings.completedAt,
           password: tastings.password,
+          showRatingField: tastings.showRatingField,
+          showNotesField: tastings.showNotesField,
           requiresPassword: sql<boolean>`${tastings.password} IS NOT NULL`
         })
         .from(tastings)

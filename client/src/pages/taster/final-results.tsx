@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import Leaderboard from '@/components/tasting/leaderboard';
 import { useAuth } from '@/hooks/use-auth';
 import { apiRequest, queryClient } from '@/lib/queryClient';
+import RankedAvatar from '@/components/tasting/ranked-avatar';
 
 type Participant = {
   id: number;
@@ -26,6 +27,33 @@ type ScoringRule = {
   varietals: number;
   displayCount?: number | null;
   anyVarietalPoint?: boolean;
+};
+
+type FlightTopScorerResponse = {
+  tastingId: number;
+  flights: Array<{
+    flightId: number;
+    orderIndex?: number | null;
+    name?: string | null;
+    topScorer: null | {
+      participantId: number;
+      userId: number;
+      name: string;
+      company?: string | null;
+      profileImage?: string | null;
+      totalScore: number;
+    };
+  }>;
+};
+
+const formatFlightDisplayName = (orderIndex?: number | null, name?: string | null) => {
+  const numericOrder = Number(orderIndex);
+  const hasValidOrder = Number.isFinite(numericOrder);
+  const defaultName = hasValidOrder ? `Flight ${numericOrder + 1}` : 'Flight';
+  if (!name || !name.trim()) return defaultName;
+  const trimmed = name.trim();
+  if (trimmed.toLowerCase() === defaultName.toLowerCase()) return defaultName;
+  return `${defaultName} – ${trimmed}`;
 };
 
 export default function FinalResults() {
@@ -105,6 +133,19 @@ export default function FinalResults() {
     refetchInterval: 2000,
   });
 
+  const { data: flightTopScorers } = useQuery<FlightTopScorerResponse>({
+    queryKey: [`/api/tastings/${tastingId}/flight-top-scorers`],
+    queryFn: async () => {
+      const res = await apiRequest('GET', `/api/tastings/${tastingId}/flight-top-scorers`);
+      if (!res.ok) throw new Error('Flight-Top-Scorer konnten nicht geladen werden');
+      return res.json();
+    },
+    enabled: !isNaN(tastingId),
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    staleTime: 0,
+  });
+
   // Sofort aktualisieren, wenn Server Scores pusht
   useEffect(() => {
     if (!tastingId) return;
@@ -159,6 +200,58 @@ export default function FinalResults() {
       </Card>
 
       <Leaderboard tastingId={tastingId} displayCount={scoring?.displayCount ?? null} currentUserId={user?.id ?? undefined} />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Beste*r Verkoster*in je Flight</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {(flightTopScorers?.flights?.length ?? 0) === 0 ? (
+            <p className="text-sm text-gray-500">Noch keine Auswertung verfügbar.</p>
+          ) : (
+            flightTopScorers!.flights.map((entry) => {
+              const label = formatFlightDisplayName(entry.orderIndex, entry.name);
+              const top = entry.topScorer;
+              const isCurrentUser = top?.userId === user?.id;
+              return (
+                <div key={entry.flightId} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm font-semibold text-gray-700">{label}</p>
+                    <Badge className={top ? 'bg-[#274E37] text-white' : 'bg-gray-200 text-gray-700'}>
+                      {top ? `${top.totalScore} Pkt` : '—'}
+                    </Badge>
+                  </div>
+                  {top ? (
+                    <div
+                      className={`p-3 rounded-md border flex items-center space-x-3 ${
+                        isCurrentUser ? 'ring-2 ring-[#274E37] ring-opacity-50 bg-[#FFF9DB]' : 'bg-gray-50'
+                      }`}
+                    >
+                      <RankedAvatar
+                        imageUrl={top.profileImage}
+                        name={top.name}
+                        rank={1}
+                        sizeClass="h-12 w-12"
+                      />
+                      <div className="flex-1">
+                        <p className="font-medium">
+                          {top.name}
+                          {isCurrentUser && <span className="ml-2 text-xs">(Sie)</span>}
+                        </p>
+                        <p className="text-xs opacity-70">
+                          {top.company?.trim() || 'Unternehmen unbekannt'}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">Keine Auswertung für diesen Flight.</p>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
