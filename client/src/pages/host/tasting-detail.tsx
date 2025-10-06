@@ -22,7 +22,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useState, useEffect, useMemo, useRef, type KeyboardEvent } from "react";
+import { useState, useEffect, useMemo, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import RankedAvatar from "@/components/tasting/ranked-avatar";
@@ -73,7 +73,65 @@ interface Wine {
   vintage: string;
   varietals: string[];
   letterCode: string;
+  vinaturelId?: string | null;
+  vinaturelProductUrl?: string | null;
+  vinaturelExternalId?: string | null;
+  vinaturelArticleNumber?: string | null;
 }
+
+const normalizeVinaturelUrl = (raw?: string | null) => {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+  return `https://www.vinaturel.de/${trimmed.replace(/^\/+/, '')}`;
+};
+
+const resolveVinaturelUrl = (wine: {
+  vinaturelProductUrl?: string | null;
+  vinaturelId?: string | null;
+  vinaturelArticleNumber?: string | null;
+  vinaturelExternalId?: string | null;
+}, label?: string) => {
+  const directUrl = normalizeVinaturelUrl(wine.vinaturelProductUrl);
+  if (directUrl) return directUrl;
+
+  const candidates = [
+    wine.vinaturelArticleNumber,
+    wine.vinaturelExternalId,
+    wine.vinaturelId,
+    label,
+  ].map((value) => value?.trim()).filter((value): value is string => !!value);
+
+  if (candidates.length === 0) return null;
+
+  const query = candidates[0];
+  return `https://www.vinaturel.de/search?search=${encodeURIComponent(query)}`;
+};
+
+const renderWineTitle = (wine: {
+  producer?: string | null;
+  name?: string | null;
+  vinaturelProductUrl?: string | null;
+  vinaturelId?: string | null;
+  vinaturelArticleNumber?: string | null;
+  vinaturelExternalId?: string | null;
+}) => {
+  const label = `${wine.producer ?? ''} ${wine.name ?? ''}`.trim() || 'Unbekannter Wein';
+  const url = resolveVinaturelUrl(wine, label);
+  return url ? (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-[#274E37] hover:text-[#e65b2d] hover:underline"
+    >
+      {label}
+    </a>
+  ) : (
+    <span>{label}</span>
+  );
+};
 
 interface Flight {
   id: number;
@@ -148,7 +206,7 @@ function FlightWineList({ flight, isHost }: { flight: Flight; isHost: boolean })
                 {wine.letterCode}
               </div>
               <div>
-                <p className="font-medium">{wine.producer} {wine.name}</p>
+                <p className="font-medium">{renderWineTitle(wine)}</p>
                 <p className="text-sm text-gray-500">{wine.region}, {wine.country}, {wine.vintage}</p>
                 <p className="text-sm text-gray-600 italic">{wine.varietals && wine.varietals.join(', ')}</p>
               </div>
@@ -1220,6 +1278,17 @@ export default function TastingDetailPage() {
     } catch { return letterCode ? `(Wein ${letterCode})` : ''; }
   };
 
+  const renderWineSummary = (wine: any, suffix?: ReactNode) => {
+    if (!wine) return '—';
+    return (
+      <>
+        <span className="mr-1">{formatWineLabel(wine.wineId, wine.letterCode)}</span>
+        {renderWineTitle(wine)}
+        {suffix ? <span> {suffix}</span> : null}
+      </>
+    );
+  };
+
   const renderRecognitionHighlight = (title: string, wine: any, tone: 'positive' | 'negative') => {
     const containerTone = tone === 'positive'
       ? 'border-emerald-100 bg-emerald-50/70'
@@ -1235,7 +1304,12 @@ export default function TastingDetailPage() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>
             <p className={`mt-2 text-sm font-semibold ${accentText}`}>
-              {wine ? `${formatWineLabel(wine.wineId, wine.letterCode)} ${wine.producer} ${wine.name}` : 'Noch keine Auswertung'}
+              {wine ? (
+                <>
+                  <span className="mr-1">{formatWineLabel(wine.wineId, wine.letterCode)}</span>
+                  {renderWineTitle(wine)}
+                </>
+              ) : 'Noch keine Auswertung'}
             </p>
             <p className="mt-1 text-xs text-slate-600">
               {wine ? 'Trefferquote über alle Teilnehmer*innen' : 'Sobald ausreichend Tipps vorhanden sind, erscheint hier das Highlight.'}
@@ -1270,7 +1344,12 @@ export default function TastingDetailPage() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>
             <p className={`mt-2 text-sm font-semibold ${accentText}`}>
-              {hasRating ? `${formatWineLabel(wine.wineId, wine.letterCode)} ${wine.producer} ${wine.name}` : 'Noch keine Bewertungen'}
+              {hasRating ? (
+                <>
+                  <span className="mr-1">{formatWineLabel(wine.wineId, wine.letterCode)}</span>
+                  {renderWineTitle(wine)}
+                </>
+              ) : 'Noch keine Bewertungen'}
             </p>
             <p className="mt-1 text-xs text-slate-600">
               {hasRating ? `${wine.count} Bewertung${wine.count === 1 ? '' : 'en'} eingegangen` : 'Sobald Bewertungen vorliegen, werden sie hier angezeigt.'}
@@ -1433,19 +1512,39 @@ export default function TastingDetailPage() {
                 </div>
                 <div>
                   <span className="font-medium">Am besten erkannt: </span>
-                  {lastCompletedStats.bestRecognizedWine ? `${formatWineLabel(lastCompletedStats.bestRecognizedWine.wineId, lastCompletedStats.bestRecognizedWine.letterCode)} ${lastCompletedStats.bestRecognizedWine.producer} ${lastCompletedStats.bestRecognizedWine.name} – ∅ ${Number(lastCompletedStats.bestRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+                  {lastCompletedStats.bestRecognizedWine
+                    ? renderWineSummary(
+                        lastCompletedStats.bestRecognizedWine,
+                        <>– ∅ {Number(lastCompletedStats.bestRecognizedWine.avgScore).toFixed(2)} Pkt</>
+                      )
+                    : '—'}
                 </div>
                 <div>
                   <span className="font-medium">Am schlechtesten erkannt: </span>
-                  {lastCompletedStats.worstRecognizedWine ? `${formatWineLabel(lastCompletedStats.worstRecognizedWine.wineId, lastCompletedStats.worstRecognizedWine.letterCode)} ${lastCompletedStats.worstRecognizedWine.producer} ${lastCompletedStats.worstRecognizedWine.name} – ∅ ${Number(lastCompletedStats.worstRecognizedWine.avgScore).toFixed(2)} Pkt` : '—'}
+                  {lastCompletedStats.worstRecognizedWine
+                    ? renderWineSummary(
+                        lastCompletedStats.worstRecognizedWine,
+                        <>– ∅ {Number(lastCompletedStats.worstRecognizedWine.avgScore).toFixed(2)} Pkt</>
+                      )
+                    : '—'}
                 </div>
                 <div>
                   <span className="font-medium">Bestbewertet: </span>
-                  {lastCompletedStats.bestRatedWine && lastCompletedStats.bestRatedWine.count > 0 ? `${formatWineLabel(lastCompletedStats.bestRatedWine.wineId, lastCompletedStats.bestRatedWine.letterCode)} ${lastCompletedStats.bestRatedWine.producer} ${lastCompletedStats.bestRatedWine.name} – ∅ ${Number(lastCompletedStats.bestRatedWine.avgRating).toFixed(2)} (${lastCompletedStats.bestRatedWine.count})` : '—'}
+                  {lastCompletedStats.bestRatedWine && lastCompletedStats.bestRatedWine.count > 0
+                    ? renderWineSummary(
+                        lastCompletedStats.bestRatedWine,
+                        <>– ∅ {Number(lastCompletedStats.bestRatedWine.avgRating).toFixed(2)} ({lastCompletedStats.bestRatedWine.count})</>
+                      )
+                    : '—'}
                 </div>
                 <div>
                   <span className="font-medium">Schlecht bewertet: </span>
-                  {lastCompletedStats.worstRatedWine && lastCompletedStats.worstRatedWine.count > 0 ? `${formatWineLabel(lastCompletedStats.worstRatedWine.wineId, lastCompletedStats.worstRatedWine.letterCode)} ${lastCompletedStats.worstRatedWine.producer} ${lastCompletedStats.worstRatedWine.name} – ∅ ${Number(lastCompletedStats.worstRatedWine.avgRating).toFixed(2)} (${lastCompletedStats.worstRatedWine.count})` : '—'}
+                  {lastCompletedStats.worstRatedWine && lastCompletedStats.worstRatedWine.count > 0
+                    ? renderWineSummary(
+                        lastCompletedStats.worstRatedWine,
+                        <>– ∅ {Number(lastCompletedStats.worstRatedWine.avgRating).toFixed(2)} ({lastCompletedStats.worstRatedWine.count})</>
+                      )
+                    : '—'}
                 </div>
               </CardContent>
             </Card>

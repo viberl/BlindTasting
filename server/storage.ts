@@ -13,12 +13,19 @@ import createMemoryStore from "memorystore";
 import connectPgSimple from "connect-pg-simple";
 import { db } from "./db";
 import { Pool } from "pg";
+import { vinaturelWines } from "../db/schema";
 
 interface TastingWithHost extends Tasting {
   hostName: string;
   hostCompany: string | null;
   requiresPassword?: boolean;
 }
+
+type WineWithVinaturelMeta = Wine & {
+  vinaturelProductUrl?: string | null;
+  vinaturelExternalId?: string | null;
+  vinaturelArticleNumber?: string | null;
+};
 
 const tastingStore: {
   hosted: TastingWithHost[];
@@ -86,8 +93,8 @@ export interface IStorage {
   
   // Wine methods
   createWine(wine: Omit<InsertWine, 'id'> & { vinaturelId?: string | null }): Promise<Wine>;
-  getWinesByFlight(flightId: number): Promise<Wine[]>;
-  getWineById(id: number): Promise<Wine | undefined>;
+  getWinesByFlight(flightId: number): Promise<WineWithVinaturelMeta[]>;
+  getWineById(id: number): Promise<WineWithVinaturelMeta | undefined>;
   searchWines(query: string, limit?: number): Promise<Wine[]>;
   
   // Participant methods
@@ -562,21 +569,125 @@ export class MemStorage implements IStorage {
     return result[0];
   }
 
-  async getWinesByFlight(flightId: number): Promise<Wine[]> {
+  async getWinesByFlight(flightId: number): Promise<WineWithVinaturelMeta[]> {
     console.log('[getWinesByFlight] Using DB:', process.env.DATABASE_URL);
     console.log('[getWinesByFlight] Querying for flightId:', flightId);
-    const result = await db
+
+    const baseWines = await db
       .select()
       .from(wines)
       .where(eq(wines.flightId, flightId))
       .orderBy(wines.letterCode);
+
+    const metaCache = new Map<string, { productUrl: string | null; externalId: string | null; articleNumber: string | null } | null>();
+
+    const fetchVinaturelMeta = async (rawId?: string | null) => {
+      const identifier = rawId?.trim();
+      if (!identifier) return null;
+      if (metaCache.has(identifier)) return metaCache.get(identifier)!;
+
+      const isNumeric = /^\d+$/.test(identifier);
+      let meta: { productUrl: string | null; externalId: string | null; articleNumber: string | null } | null = null;
+
+      if (isNumeric) {
+        const byId = await db.execute(sql`
+          SELECT product_url as "productUrl", external_id as "externalId", article_number as "articleNumber"
+          FROM vinaturel_wines
+          WHERE id = ${Number(identifier)}
+          LIMIT 1
+        `);
+        meta = (byId.rows?.[0] as any) ?? null;
+      }
+
+      if (!meta) {
+        const byExternal = await db.execute(sql`
+          SELECT product_url as "productUrl", external_id as "externalId", article_number as "articleNumber"
+          FROM vinaturel_wines
+          WHERE external_id = ${identifier}
+          LIMIT 1
+        `);
+        meta = (byExternal.rows?.[0] as any) ?? null;
+      }
+
+      if (!meta) {
+        const byArticle = await db.execute(sql`
+          SELECT product_url as "productUrl", external_id as "externalId", article_number as "articleNumber"
+          FROM vinaturel_wines
+          WHERE article_number = ${identifier}
+          LIMIT 1
+        `);
+        meta = (byArticle.rows?.[0] as any) ?? null;
+      }
+
+      metaCache.set(identifier, meta);
+      return meta;
+    };
+
+    const result = await Promise.all(
+      baseWines.map(async (wine) => {
+        const meta = await fetchVinaturelMeta(wine.vinaturelId);
+        return {
+          ...wine,
+          vinaturelProductUrl: meta?.productUrl ?? null,
+          vinaturelExternalId: meta?.externalId ?? null,
+          vinaturelArticleNumber: meta?.articleNumber ?? null,
+        };
+      })
+    );
+
     console.log('[getWinesByFlight] Result:', result);
     return result;
   }
 
-  async getWineById(id: number): Promise<Wine | undefined> {
-    const result = await db.select().from(wines).where(eq(wines.id, id));
-    return result[0];
+  async getWineById(id: number): Promise<WineWithVinaturelMeta | undefined> {
+    const wineRows = await db.select().from(wines).where(eq(wines.id, id)).limit(1);
+    const wine = wineRows[0];
+    if (!wine) return undefined;
+
+    const identifier = wine.vinaturelId?.trim();
+    if (!identifier) return wine;
+
+    const isNumeric = /^\d+$/.test(identifier);
+    let meta: { productUrl: string | null; externalId: string | null; articleNumber: string | null } | null = null;
+
+    if (isNumeric) {
+      const byId = await db.execute(sql`
+        SELECT product_url as "productUrl", external_id as "externalId", article_number as "articleNumber"
+        FROM vinaturel_wines
+        WHERE id = ${Number(identifier)}
+        LIMIT 1
+      `);
+      meta = (byId.rows?.[0] as any) ?? null;
+    }
+
+    if (!meta) {
+      const byExternal = await db.execute(sql`
+        SELECT product_url as "productUrl", external_id as "externalId", article_number as "articleNumber"
+        FROM vinaturel_wines
+        WHERE external_id = ${identifier}
+        LIMIT 1
+      `);
+      meta = (byExternal.rows?.[0] as any) ?? null;
+    }
+
+    if (!meta) {
+      const byArticle = await db.execute(sql`
+        SELECT product_url as "productUrl", external_id as "externalId", article_number as "articleNumber"
+        FROM vinaturel_wines
+        WHERE article_number = ${identifier}
+        LIMIT 1
+      `);
+      meta = (byArticle.rows?.[0] as any) ?? null;
+    }
+
+    if (!meta) return wine;
+
+    return {
+      ...wine,
+      vinaturelProductUrl: meta.productUrl ?? null,
+      vinaturelExternalId: meta.externalId ?? null,
+      vinaturelArticleNumber: meta.articleNumber ?? null,
+    };
   }
 
   async searchWines(query: string, limit = 20): Promise<Wine[]> {
@@ -1941,21 +2052,142 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
-  async getWinesByFlight(flightId: number): Promise<Wine[]> {
+  async getWinesByFlight(flightId: number): Promise<WineWithVinaturelMeta[]> {
     console.log('[getWinesByFlight] Using DB:', process.env.DATABASE_URL);
     console.log('[getWinesByFlight] Querying for flightId:', flightId);
-    const result = await db
+
+    const baseWines = await db
       .select()
       .from(wines)
       .where(eq(wines.flightId, flightId))
       .orderBy(wines.letterCode);
+
+    const vinaturelIds = baseWines
+      .map((wine) => wine.vinaturelId?.trim())
+      .filter((id): id is string => !!id);
+
+    if (vinaturelIds.length === 0) {
+      console.log('[getWinesByFlight] Result (no vinaturel matches):', baseWines);
+      return baseWines;
+    }
+
+    const numericVinaturelIds = vinaturelIds
+      .filter((id) => /^\d+$/.test(id))
+      .map((id) => Number(id));
+    const externalVinaturelIds = vinaturelIds.filter((id) => !/^\d+$/.test(id));
+
+    const vinaturelRows: Array<{
+      id: number;
+      externalId: string | null;
+      articleNumber: string | null;
+      productUrl: string | null;
+    }> = [];
+
+    if (numericVinaturelIds.length) {
+      const byId = await db
+        .select({
+          id: vinaturelWines.id,
+          externalId: vinaturelWines.externalId,
+          articleNumber: vinaturelWines.articleNumber,
+          productUrl: vinaturelWines.productUrl,
+        })
+        .from(vinaturelWines)
+        .where(inArray(vinaturelWines.id, numericVinaturelIds));
+      vinaturelRows.push(...byId);
+    }
+
+    if (externalVinaturelIds.length) {
+      const byExternal = await db
+        .select({
+          id: vinaturelWines.id,
+          externalId: vinaturelWines.externalId,
+          articleNumber: vinaturelWines.articleNumber,
+          productUrl: vinaturelWines.productUrl,
+        })
+        .from(vinaturelWines)
+        .where(
+          or(
+            inArray(vinaturelWines.externalId, externalVinaturelIds),
+            inArray(vinaturelWines.articleNumber, externalVinaturelIds)
+          )
+        );
+      vinaturelRows.push(...byExternal);
+    }
+
+    const mapById = new Map<number, typeof vinaturelRows[number]>();
+    const mapByExternal = new Map<string, typeof vinaturelRows[number]>();
+    const mapByArticle = new Map<string, typeof vinaturelRows[number]>();
+
+    for (const row of vinaturelRows) {
+      mapById.set(row.id, row);
+      if (row.externalId) mapByExternal.set(row.externalId, row);
+      if (row.articleNumber) mapByArticle.set(row.articleNumber, row);
+    }
+
+    const result = baseWines.map((wine) => {
+      const key = wine.vinaturelId?.trim();
+      let matched: typeof vinaturelRows[number] | undefined;
+      if (key) {
+        if (/^\d+$/.test(key)) {
+          matched = mapById.get(Number(key)) || mapByExternal.get(key) || mapByArticle.get(key);
+        } else {
+          matched = mapByExternal.get(key) || mapByArticle.get(key);
+        }
+      }
+
+      return {
+        ...wine,
+        vinaturelProductUrl: matched?.productUrl ?? null,
+        vinaturelExternalId: matched?.externalId ?? null,
+        vinaturelArticleNumber: matched?.articleNumber ?? null,
+      };
+    });
+
     console.log('[getWinesByFlight] Result:', result);
     return result;
   }
 
-  async getWineById(id: number): Promise<Wine | undefined> {
-    const result = await db.select().from(wines).where(eq(wines.id, id));
-    return result[0];
+  async getWineById(id: number): Promise<WineWithVinaturelMeta | undefined> {
+    const wineRows = await db.select().from(wines).where(eq(wines.id, id)).limit(1);
+    const wine = wineRows[0];
+    if (!wine) return undefined;
+
+    const key = wine.vinaturelId?.trim();
+    if (!key) return wine;
+
+    const numeric = /^\d+$/.test(key);
+    const candidates = await db
+      .select({
+        id: vinaturelWines.id,
+        externalId: vinaturelWines.externalId,
+        articleNumber: vinaturelWines.articleNumber,
+        productUrl: vinaturelWines.productUrl,
+      })
+      .from(vinaturelWines)
+      .where(
+        numeric
+          ? or(
+              eq(vinaturelWines.id, Number(key)),
+              eq(vinaturelWines.externalId, key),
+              eq(vinaturelWines.articleNumber, key)
+            )
+          : or(
+              eq(vinaturelWines.externalId, key),
+              eq(vinaturelWines.articleNumber, key)
+            )
+      )
+      .limit(1);
+
+    const match = candidates[0];
+
+    if (!match) return wine;
+
+    return {
+      ...wine,
+      vinaturelProductUrl: match.productUrl ?? null,
+      vinaturelExternalId: match.externalId ?? null,
+      vinaturelArticleNumber: match.articleNumber ?? null,
+    };
   }
 
   async searchWines(query: string, limit = 20): Promise<Wine[]> {

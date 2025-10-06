@@ -56,6 +56,36 @@ const formatFlightDisplayName = (orderIndex?: number | null, name?: string | nul
   return `${defaultName} – ${trimmed}`;
 };
 
+const normalizeVinaturelUrl = (raw?: string | null) => {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+  return `https://www.vinaturel.de/${trimmed.replace(/^\/+/, '')}`;
+};
+
+const resolveVinaturelUrl = (wine: {
+  vinaturelProductUrl?: string | null;
+  vinaturelId?: string | null;
+  vinaturelArticleNumber?: string | null;
+  vinaturelExternalId?: string | null;
+}, label?: string) => {
+  const directUrl = normalizeVinaturelUrl(wine.vinaturelProductUrl);
+  if (directUrl) return directUrl;
+
+  const candidates = [
+    wine.vinaturelArticleNumber,
+    wine.vinaturelExternalId,
+    wine.vinaturelId,
+    label,
+  ].map((value) => value?.trim()).filter((value): value is string => !!value);
+
+  if (candidates.length === 0) return null;
+
+  const query = candidates[0];
+  return `https://www.vinaturel.de/search?search=${encodeURIComponent(query)}`;
+};
+
 export default function FinalResults() {
   const { id } = useParams<{ id: string }>();
   const tastingId = parseInt(id);
@@ -322,7 +352,27 @@ export default function FinalResults() {
                             {wine.letterCode}
                           </span>
                           <div>
-                            <div className="font-medium">{wine.producer} {wine.name}</div>
+                      {(() => {
+                        const label = `${wine.producer ?? ''} ${wine.name ?? ''}`.trim() || wine.name || 'Wein';
+                        const url = resolveVinaturelUrl({
+                          vinaturelProductUrl: wine.vinaturelProductUrl,
+                          vinaturelId: wine.vinaturelId,
+                          vinaturelExternalId: wine.vinaturelExternalId,
+                          vinaturelArticleNumber: wine.vinaturelArticleNumber,
+                        }, label);
+                        return url ? (
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          className="font-medium block text-[#274E37] hover:text-[#e65b2d] hover:underline"
+                        >
+                          {label}
+                          </a>
+                        ) : (
+                          <div className="font-medium">{wine.producer} {wine.name}</div>
+                        );
+                      })()}
                             <div className="text-sm text-gray-600">{wine.region}, {wine.country}, {wine.vintage}</div>
                           </div>
                         </div>
