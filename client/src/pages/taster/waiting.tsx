@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
@@ -20,6 +20,31 @@ type Participant = {
   isHost: boolean;
 };
 
+type SimpleFlightInfo = {
+  id: number;
+  orderIndex?: number | null;
+  name?: string | null;
+};
+
+const formatFlightDescriptor = (flight: SimpleFlightInfo | null) => {
+  if (!flight) return null;
+  const numericOrder = Number(flight.orderIndex);
+  const hasValidOrder = Number.isFinite(numericOrder);
+  const orderLabel = hasValidOrder ? `Flight ${numericOrder + 1}` : '';
+  const trimmedName = typeof flight.name === 'string' ? flight.name.trim() : '';
+
+  if (!orderLabel && !trimmedName) return null;
+
+  if (orderLabel && trimmedName) {
+    if (trimmedName.toLowerCase() === orderLabel.toLowerCase()) {
+      return orderLabel;
+    }
+    return `${orderLabel} - ${trimmedName}`;
+  }
+
+  return orderLabel || trimmedName || null;
+};
+
 export default function WaitingPage() {
   const [match, params] = useRoute("/taster/waiting/:id");
   const tastingId = params?.id as string;
@@ -32,6 +57,7 @@ export default function WaitingPage() {
   const [tastingStarted, setTastingStarted] = useState(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const [audioEnabled, setAudioEnabled] = useState(false);
+  const [upcomingFlight, setUpcomingFlight] = useState<SimpleFlightInfo | null>(null);
 
   // Lazy create / resume an AudioContext
   const ensureAudioContext = async () => {
@@ -257,6 +283,39 @@ export default function WaitingPage() {
         if (res.ok) {
           const fls = await res.json();
           const active = (fls || []).find((f: any) => f.startedAt && !f.completedAt);
+          const pending = (fls || [])
+            .filter((f: any) => !f.startedAt)
+            .sort((a: any, b: any) => {
+              const orderA = Number(a?.orderIndex);
+              const orderB = Number(b?.orderIndex);
+              if (!Number.isFinite(orderA) && !Number.isFinite(orderB)) return 0;
+              if (!Number.isFinite(orderA)) return 1;
+              if (!Number.isFinite(orderB)) return -1;
+              return orderA - orderB;
+            })[0] || null;
+
+          setUpcomingFlight((prev) => {
+            if (!pending) {
+              return prev ? null : prev;
+            }
+            const nextInfo: SimpleFlightInfo = {
+              id: pending.id,
+              orderIndex: pending.orderIndex,
+              name: pending.name,
+            };
+
+            if (
+              prev &&
+              prev.id === nextInfo.id &&
+              prev.orderIndex === nextInfo.orderIndex &&
+              prev.name === nextInfo.name
+            ) {
+              return prev;
+            }
+
+            return nextInfo;
+          });
+
           if (active && !cancelled) {
             // kleine Verzögerung, damit evtl. Sound/Aushang sichtbar ist
             skipLeaveRef.current = true;
@@ -297,6 +356,8 @@ export default function WaitingPage() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [tastingId]);
 
+  const upcomingFlightDescriptor = useMemo(() => formatFlightDescriptor(upcomingFlight), [upcomingFlight]);
+
   return (
     <div className="p-6 max-w-2xl mx-auto">
       <div className="bg-white rounded-lg shadow-md p-6">
@@ -316,7 +377,10 @@ export default function WaitingPage() {
             </p>
           )}
           {connected && tastingStarted && (
-            <p className="text-center text-gray-700 font-medium">Gläser werden eingeschenkt, gleich geht’s los…</p>
+            <p className="text-center text-gray-700 font-medium">
+              Gläser werden eingeschenkt, gleich geht’s los…
+              {upcomingFlightDescriptor && <> mit dem {upcomingFlightDescriptor}</>}
+            </p>
           )}
         </div>
 

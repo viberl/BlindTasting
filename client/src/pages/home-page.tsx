@@ -358,8 +358,10 @@ export default function HomePage() {
     <div className="container mx-auto p-4 md:p-6 max-w-7xl bg-vinaturel-light min-h-screen">
       <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-vinaturel-original">
-            Cheers, <span className="text-vinaturel-highlight">{user?.name || 'Weinliebhaber'}</span>!
+          <h1 className="text-2xl md:text-3xl font-bold">
+            <span className="bg-gradient-to-r from-vinaturel-original to-vinaturel-highlight bg-clip-text text-transparent">
+              Cheers, {user?.name || 'Weinliebhaber'}!
+            </span>
           </h1>
           <p className="text-muted-foreground mt-1">Erstellen oder nehmen Sie an Weintastings teil</p>
         </div>

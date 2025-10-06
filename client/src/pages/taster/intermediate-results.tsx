@@ -1,9 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useParams, useLocation } from 'wouter';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/queryClient';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/use-auth';
 
 type Participant = {
@@ -12,6 +11,47 @@ type Participant = {
   userId: number;
   score: number;
   user: { id: number; name: string };
+};
+
+type FlightSummary = {
+  id: number;
+  orderIndex?: number | null;
+  name?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+};
+
+const formatFlightDescriptor = (flight: FlightSummary | null | undefined) => {
+  if (!flight) return null;
+  const numericOrder = Number(flight.orderIndex);
+  const hasValidOrder = Number.isFinite(numericOrder);
+  const orderLabel = hasValidOrder ? `Flight ${numericOrder + 1}` : '';
+  const trimmedName = typeof flight.name === 'string' ? flight.name.trim() : '';
+
+  if (!orderLabel && !trimmedName) return null;
+
+  if (orderLabel && trimmedName) {
+    if (trimmedName.toLowerCase() === orderLabel.toLowerCase()) {
+      return orderLabel;
+    }
+    return `${orderLabel} - ${trimmedName}`;
+  }
+
+  return orderLabel || trimmedName || null;
+};
+
+const findUpcomingFlight = (flights?: FlightSummary[] | null) => {
+  if (!Array.isArray(flights)) return null;
+  return [...flights]
+    .filter((flight) => !flight.startedAt)
+    .sort((a, b) => {
+      const orderA = Number(a.orderIndex);
+      const orderB = Number(b.orderIndex);
+      if (!Number.isFinite(orderA) && !Number.isFinite(orderB)) return 0;
+      if (!Number.isFinite(orderA)) return 1;
+      if (!Number.isFinite(orderB)) return -1;
+      return orderA - orderB;
+    })[0] ?? null;
 };
 
 export default function IntermediateResults() {
@@ -40,7 +80,7 @@ export default function IntermediateResults() {
   const rank = my ? sorted.findIndex(p => ((p as any).userId === my.userId) || (p.user?.id === my?.user?.id)) + 1 : null;
 
   // Auto-poll to move on when next flight starts
-  const { data: flights } = useQuery<any[]>({
+  const { data: flights } = useQuery<FlightSummary[]>({
     queryKey: [`/api/tastings/${tastingId}/flights`],
     queryFn: async () => {
       const res = await apiRequest('GET', `/api/tastings/${tastingId}/flights`);
@@ -84,6 +124,9 @@ export default function IntermediateResults() {
     if (allCompleted) navigate(`/tasting/${tastingId}/results`);
   }, [flights, navigate, tastingId]);
 
+  const nextFlight = useMemo(() => findUpcomingFlight(flights), [flights]);
+  const nextFlightDescriptor = useMemo(() => formatFlightDescriptor(nextFlight), [nextFlight]);
+
   return (
     <div className="container mx-auto py-10 px-4 max-w-2xl">
       <Card>
@@ -105,13 +148,12 @@ export default function IntermediateResults() {
               </p>
             )}
           </div>
-          <div className="text-center text-gray-600 mt-6">
-            Neuer Flight wird vorbereitet. Gläser werden eingeschenkt.
-          </div>
-          <div className="text-center mt-6">
-            <Button onClick={() => navigate(`/tasting/${tastingId}`)} className="bg-[#274E37] hover:bg-[#e65b2d]">
-              Zur Tasting-Übersicht
-            </Button>
+          <div className="text-center text-gray-600 mt-6 space-y-1">
+            <p>Neuer Flight wird vorbereitet.</p>
+            <p>
+              Gläser werden eingeschenkt, gleich geht’s los…
+              {nextFlightDescriptor && <> mit dem {nextFlightDescriptor}</>}
+            </p>
           </div>
         </CardContent>
       </Card>
