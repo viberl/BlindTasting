@@ -29,7 +29,11 @@ export default function Navbar() {
     <header className="bg-white border-b sticky top-0 z-50">
       <div className="container mx-auto p-4 flex justify-between items-center">
         <div className="flex items-center gap-2">
-          <Wine className="h-6 w-6 text-[#274E37]" />
+          <img
+            src="/BlindSip_glass_only_cleaned.png"
+            alt="BlindSip Logo"
+            className="h-8 w-8 object-contain"
+          />
           <button
             onClick={() => navigate("/")}
             className="text-xl font-bold text-[#274E37]"
