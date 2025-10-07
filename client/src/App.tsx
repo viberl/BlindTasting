@@ -22,6 +22,7 @@ import FinalResults from "@/pages/taster/final-results";
 import ProfilePage from "@/pages/profile";
 import MyTastingsPage from "@/pages/my-tastings";
 import HostDashboard from "@/pages/host/dashboard";
+import MyWinesPage from "@/pages/my-wines";
 
 function Router() {
   return (
@@ -35,6 +36,7 @@ function Router() {
       <ProtectedRoute path="/tasting/:id/results" component={FinalResults} />
       <ProtectedRoute path="/profile" component={ProfilePage} />
       <ProtectedRoute path="/my-tastings" component={MyTastingsPage} />
+      <ProtectedRoute path="/my-wines" component={MyWinesPage} />
       <ProtectedRoute path="/taster/join/:id" component={JoinPage} />
       <ProtectedRoute path="/taster/waiting/:id" component={WaitingPage} />
       <Route path="/auth" component={AuthPage} />

@@ -9,7 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Wine, User, LogOut, ChevronDown } from "lucide-react";
+import { Wine, User, LogOut, ChevronDown, Heart } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export default function Navbar() {
@@ -46,7 +46,10 @@ export default function Navbar() {
           {user ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  className="flex items-center gap-2 border-gray-200 text-[#274E37] hover:text-[#274E37] hover:bg-[#274E37]/10 focus:text-[#274E37] focus:bg-[#274E37]/10"
+                >
                   <Avatar className="h-8 w-8 border border-gray-200">
                     <AvatarImage src={user.profileImage} alt={user.name} />
                     <AvatarFallback>
@@ -61,21 +64,28 @@ export default function Navbar() {
                 <DropdownMenuLabel>Mein Konto</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  className="cursor-pointer"
+                  className="cursor-pointer text-[#274E37] focus:bg-[#274E37]/10 focus:text-[#274E37]"
                   onClick={() => navigate("/my-tastings")}
                 >
                   <Wine className="mr-2 h-4 w-4" />
                   <span>Meine Verkostungen</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  className="cursor-pointer"
+                  className="cursor-pointer text-[#274E37] focus:bg-[#274E37]/10 focus:text-[#274E37]"
+                  onClick={() => navigate("/my-wines")}
+                >
+                  <Heart className="mr-2 h-4 w-4" />
+                  <span>Verkostete Weine</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="cursor-pointer text-[#274E37] focus:bg-[#274E37]/10 focus:text-[#274E37]"
                   onClick={() => navigate("/profile")}
                 >
                   <User className="mr-2 h-4 w-4" />
                   <span>Mein Profil</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  className="cursor-pointer text-red-600"
+                  className="cursor-pointer text-[#e65b2d] focus:bg-[#e65b2d]/10 focus:text-[#e65b2d]"
                   onClick={handleLogout}
                 >
                   <LogOut className="mr-2 h-4 w-4" />

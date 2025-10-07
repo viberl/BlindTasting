@@ -8,6 +8,8 @@ import Leaderboard from '@/components/tasting/leaderboard';
 import { useAuth } from '@/hooks/use-auth';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import RankedAvatar from '@/components/tasting/ranked-avatar';
+import { Heart } from 'lucide-react';
+import { useFavoriteWines, makeFavoriteKey } from '@/hooks/use-favorite-wines';
 
 type Participant = {
   id: number;
@@ -91,6 +93,7 @@ export default function FinalResults() {
   const tastingId = parseInt(id);
   const [_, navigate] = useLocation();
   const { user } = useAuth();
+  const { toggleFavorite, isFavorite } = useFavoriteWines();
 
   const { data: participants } = useQuery<Participant[]>({
     queryKey: [`/api/tastings/${tastingId}/participants`],
@@ -344,6 +347,15 @@ export default function FinalResults() {
                     if (varietalAdd.includes(label)) return true;
                     return base;
                   };
+                  const label = `${wine.producer ?? ''} ${wine.name ?? ''}`.trim() || wine.name || 'Wein';
+                  const vinaturelUrl = resolveVinaturelUrl({
+                    vinaturelProductUrl: wine.vinaturelProductUrl,
+                    vinaturelId: wine.vinaturelId,
+                    vinaturelExternalId: wine.vinaturelExternalId,
+                    vinaturelArticleNumber: wine.vinaturelArticleNumber,
+                  }, label);
+                  const favoriteKey = makeFavoriteKey(tastingId, wine.id);
+                  const favorite = isFavorite(favoriteKey);
                   return (
                     <div key={wine.id} className="p-3 rounded border bg-gray-50">
                       <div className="flex items-center justify-between">
@@ -352,31 +364,35 @@ export default function FinalResults() {
                             {wine.letterCode}
                           </span>
                           <div>
-                      {(() => {
-                        const label = `${wine.producer ?? ''} ${wine.name ?? ''}`.trim() || wine.name || 'Wein';
-                        const url = resolveVinaturelUrl({
-                          vinaturelProductUrl: wine.vinaturelProductUrl,
-                          vinaturelId: wine.vinaturelId,
-                          vinaturelExternalId: wine.vinaturelExternalId,
-                          vinaturelArticleNumber: wine.vinaturelArticleNumber,
-                        }, label);
-                        return url ? (
-                          <a
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          className="font-medium block text-[#274E37] hover:text-[#e65b2d] hover:underline"
-                        >
-                          {label}
-                          </a>
-                        ) : (
-                          <div className="font-medium">{wine.producer} {wine.name}</div>
-                        );
-                      })()}
+                            {vinaturelUrl ? (
+                              <a
+                                href={vinaturelUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-medium block text-[#274E37] hover:text-[#e65b2d] hover:underline"
+                              >
+                                {label}
+                              </a>
+                            ) : (
+                              <div className="font-medium">{wine.producer} {wine.name}</div>
+                            )}
                             <div className="text-sm text-gray-600">{wine.region}, {wine.country}, {wine.vintage}</div>
                           </div>
                         </div>
-                        <Badge className="bg-[#274E37]">{g?.score ?? 0} Pkt</Badge>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleFavorite(favoriteKey)}
+                            className={`h-8 w-8 flex items-center justify-center transition-colors ${
+                              favorite ? 'text-[#e65b2d]' : 'text-gray-300 hover:text-[#e65b2d]'
+                            }`}
+                            aria-pressed={favorite}
+                            aria-label={favorite ? 'Favorit entfernen' : 'Als Favorit markieren'}
+                          >
+                            <Heart className={`h-5 w-5 ${favorite ? 'fill-[#e65b2d]' : 'fill-transparent'}`} />
+                          </button>
+                          <Badge className="bg-[#274E37]" >{g?.score ?? 0} Pkt</Badge>
+                        </div>
                       </div>
                       {g ? (
                         <div className="mt-2 text-sm">

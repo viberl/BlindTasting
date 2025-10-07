@@ -25,6 +25,7 @@ type WineWithVinaturelMeta = Wine & {
   vinaturelProductUrl?: string | null;
   vinaturelExternalId?: string | null;
   vinaturelArticleNumber?: string | null;
+  imageUrl?: string | null;
 };
 
 const tastingStore: {
@@ -112,6 +113,9 @@ export interface IStorage {
   }): Promise<Guess>;
   getGuessesByParticipant(participantId: number): Promise<Guess[]>;
   getGuessByWine(participantId: number, wineId: number): Promise<Guess | undefined>;
+  getGuessById(guessId: number): Promise<Guess | undefined>;
+  getParticipantById(participantId: number): Promise<Participant | undefined>;
+  updateGuessNotes(guessId: number, notes: string | null): Promise<Guess>;
   updateGuessScore(id: number, score: number): Promise<Guess>;
   
   // Session store
@@ -977,6 +981,34 @@ export class MemStorage implements IStorage {
         )
       );
     
+    return result[0];
+  }
+
+  async getGuessById(guessId: number): Promise<Guess | undefined> {
+    const result = await db
+      .select()
+      .from(guesses)
+      .where(eq(guesses.id, guessId))
+      .limit(1);
+    return result[0];
+  }
+
+  async getParticipantById(participantId: number): Promise<Participant | undefined> {
+    const result = await db
+      .select()
+      .from(participants)
+      .where(eq(participants.id, participantId))
+      .limit(1);
+    return result[0];
+  }
+
+  async updateGuessNotes(guessId: number, notes: string | null): Promise<Guess> {
+    const result = await db
+      .update(guesses)
+      .set({ notes })
+      .where(eq(guesses.id, guessId))
+      .returning();
+    if (!result[0]) throw new Error('Guess not found');
     return result[0];
   }
 
@@ -2477,6 +2509,34 @@ export class DatabaseStorage implements IStorage {
         )
       );
     
+    return result[0];
+  }
+
+  async getGuessById(guessId: number): Promise<Guess | undefined> {
+    const result = await db
+      .select()
+      .from(guesses)
+      .where(eq(guesses.id, guessId))
+      .limit(1);
+    return result[0];
+  }
+
+  async getParticipantById(participantId: number): Promise<Participant | undefined> {
+    const result = await db
+      .select()
+      .from(participants)
+      .where(eq(participants.id, participantId))
+      .limit(1);
+    return result[0];
+  }
+
+  async updateGuessNotes(guessId: number, notes: string | null): Promise<Guess> {
+    const result = await db
+      .update(guesses)
+      .set({ notes })
+      .where(eq(guesses.id, guessId))
+      .returning();
+    if (!result[0]) throw new Error('Guess not found');
     return result[0];
   }
 

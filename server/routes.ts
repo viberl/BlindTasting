@@ -343,6 +343,188 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/users/me/wines", ensureAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.id;
+
+      const tastedRes = await db.execute(sql`
+        SELECT
+          g.id AS "guessId",
+          g.score AS "score",
+          g.rating AS "rating",
+          g.notes AS "notes",
+          g.submitted_at AS "submittedAt",
+          w.id AS "wineId",
+          w.name AS "wineName",
+          w.letter_code AS "letterCode",
+          w.producer AS "producer",
+          w.country AS "country",
+          w.region AS "region",
+          w.vintage AS "vintage",
+          w.varietals AS "varietals",
+          w.vinaturel_id AS "vinaturelId",
+          w.image_url AS "wineImageUrl",
+          t.id AS "tastingId",
+          t.name AS "tastingName",
+          t.completed_at AS "tastingCompletedAt",
+          t.created_at AS "tastingCreatedAt",
+          t.status AS "tastingStatus",
+          f.id AS "flightId",
+          f.name AS "flightName",
+          f.order_index AS "orderIndex",
+          vw.product_url AS "vinaturelProductUrl",
+          vw.external_id AS "vinaturelExternalId",
+          vw.article_number AS "vinaturelArticleNumber",
+          vw.image_url AS "vinaturelImageUrl",
+          hu.name AS "hostName",
+          hu.company AS "hostCompany"
+        FROM guesses g
+        JOIN participants p ON p.id = g.participant_id
+        JOIN wines w ON w.id = g.wine_id
+        JOIN flights f ON f.id = w.flight_id
+        JOIN tastings t ON t.id = f.tasting_id
+        LEFT JOIN users hu ON hu.id = t.host_id
+        LEFT JOIN vinaturel_wines vw ON (
+          vw.id::text = w.vinaturel_id
+          OR vw.external_id = w.vinaturel_id
+          OR vw.article_number = w.vinaturel_id
+        )
+        WHERE p.user_id = ${userId}
+        ORDER BY g.submitted_at DESC
+      `);
+
+      const hostedRes = await db.execute(sql`
+        SELECT
+          w.id AS "wineId",
+          w.name AS "wineName",
+          w.letter_code AS "letterCode",
+          w.producer AS "producer",
+          w.country AS "country",
+          w.region AS "region",
+          w.vintage AS "vintage",
+          w.varietals AS "varietals",
+          w.vinaturel_id AS "vinaturelId",
+          w.image_url AS "wineImageUrl",
+          t.id AS "tastingId",
+          t.name AS "tastingName",
+          t.completed_at AS "tastingCompletedAt",
+          t.created_at AS "tastingCreatedAt",
+          t.status AS "tastingStatus",
+          f.id AS "flightId",
+          f.name AS "flightName",
+          f.order_index AS "orderIndex",
+          vw.product_url AS "vinaturelProductUrl",
+          vw.external_id AS "vinaturelExternalId",
+          vw.article_number AS "vinaturelArticleNumber",
+          vw.image_url AS "vinaturelImageUrl"
+        FROM wines w
+        JOIN flights f ON f.id = w.flight_id
+        JOIN tastings t ON t.id = f.tasting_id
+        LEFT JOIN vinaturel_wines vw ON (
+          vw.id::text = w.vinaturel_id
+          OR vw.external_id = w.vinaturel_id
+          OR vw.article_number = w.vinaturel_id
+        )
+        WHERE t.host_id = ${userId}
+        ORDER BY COALESCE(t.completed_at, t.created_at) DESC, f.order_index ASC, w.letter_code ASC
+      `);
+
+      const mapRow = (row: any) => ({
+        guessId: row.guessId !== undefined ? (row.guessId !== null ? Number(row.guessId) : null) : null,
+        score: row.score !== null && row.score !== undefined ? Number(row.score) : null,
+        rating: row.rating !== null && row.rating !== undefined ? Number(row.rating) : null,
+        notes: row.notes ?? null,
+        submittedAt: row.submittedAt ? new Date(row.submittedAt).toISOString() : null,
+        wine: {
+          id: Number(row.wineId),
+          name: row.wineName,
+          letterCode: row.letterCode,
+          producer: row.producer,
+          country: row.country,
+          region: row.region,
+          vintage: row.vintage,
+          varietals: Array.isArray(row.varietals)
+            ? row.varietals
+            : row.varietals
+              ? String(row.varietals)
+                  .split(',')
+                  .map((v: string) => v.trim())
+                  .filter(Boolean)
+              : [],
+          vinaturelId: row.vinaturelId ?? null,
+          vinaturelProductUrl: row.vinaturelProductUrl ?? null,
+          vinaturelExternalId: row.vinaturelExternalId ?? null,
+          vinaturelArticleNumber: row.vinaturelArticleNumber ?? null,
+          imageUrl: row.vinaturelImageUrl ?? row.wineImageUrl ?? null,
+        },
+        tasting: {
+          id: Number(row.tastingId),
+          name: row.tastingName,
+          status: row.tastingStatus,
+          completedAt: row.tastingCompletedAt ? new Date(row.tastingCompletedAt).toISOString() : null,
+          createdAt: row.tastingCreatedAt ? new Date(row.tastingCreatedAt).toISOString() : null,
+          hostName: row.hostName ?? null,
+          hostCompany: row.hostCompany ?? null,
+        },
+        flight: row.flightId !== undefined && row.flightId !== null ? {
+          id: Number(row.flightId),
+          name: row.flightName,
+          orderIndex: row.orderIndex !== null && row.orderIndex !== undefined ? Number(row.orderIndex) : null,
+        } : null,
+      });
+
+      const tasted = (tastedRes.rows as any[]).map(mapRow);
+      const hosted = (hostedRes.rows as any[]).map(row => ({
+        ...mapRow(row),
+        guessId: null,
+        score: null,
+        rating: null,
+        notes: null,
+        submittedAt: null,
+      }));
+
+      return res.json({ tasted, hosted });
+    } catch (error) {
+      console.error('Error in /api/users/me/wines:', error);
+      return res.status(500).json({ error: 'Fehler beim Laden der Weine' });
+    }
+  });
+
+  app.patch('/api/users/me/wines/:guessId/notes', ensureAuthenticated, async (req, res) => {
+    try {
+      const guessId = Number(req.params.guessId);
+      if (Number.isNaN(guessId)) {
+        return res.status(400).json({ error: 'Ungültige ID' });
+      }
+
+      const schema = z.object({
+        notes: z.string().max(5000).optional(),
+      });
+
+      const body = schema.parse(req.body ?? {});
+
+      const guess = await storage.getGuessById(guessId);
+      if (!guess) {
+        return res.status(404).json({ error: 'Guess nicht gefunden' });
+      }
+
+      const participant = await storage.getParticipantById(guess.participantId);
+      if (!participant || participant.userId !== req.user!.id) {
+        return res.status(403).json({ error: 'Keine Berechtigung' });
+      }
+
+      await storage.updateGuessNotes(guessId, body.notes ?? null);
+
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('Error updating notes:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.issues });
+      }
+      return res.status(500).json({ error: 'Fehler beim Aktualisieren der Notizen' });
+    }
+  });
+
   // Create a new tasting
   app.post("/api/tastings", ensureAuthenticated, async (req, res) => {
     console.log('Session User:', req.user?.id);
