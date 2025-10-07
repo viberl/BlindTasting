@@ -20,6 +20,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { toast, useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getWineLink, LinkableWine } from "@/lib/wine-link-utils";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useState, useEffect, useMemo, useRef, type KeyboardEvent, type ReactNode } from "react";
@@ -73,63 +74,36 @@ interface Wine {
   vintage: string;
   varietals: string[];
   letterCode: string;
+  isCustom: boolean | string | number;
   vinaturelId?: string | null;
   vinaturelProductUrl?: string | null;
   vinaturelExternalId?: string | null;
   vinaturelArticleNumber?: string | null;
 }
 
-const normalizeVinaturelUrl = (raw?: string | null) => {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
-  return `https://www.vinaturel.de/${trimmed.replace(/^\/+/, '')}`;
-};
-
-const resolveVinaturelUrl = (wine: {
-  vinaturelProductUrl?: string | null;
-  vinaturelId?: string | null;
-  vinaturelArticleNumber?: string | null;
-  vinaturelExternalId?: string | null;
-}, label?: string) => {
-  const directUrl = normalizeVinaturelUrl(wine.vinaturelProductUrl);
-  if (directUrl) return directUrl;
-
-  const candidates = [
-    wine.vinaturelArticleNumber,
-    wine.vinaturelExternalId,
-    wine.vinaturelId,
-    label,
-  ].map((value) => value?.trim()).filter((value): value is string => !!value);
-
-  if (candidates.length === 0) return null;
-
-  const query = candidates[0];
-  return `https://www.vinaturel.de/search?search=${encodeURIComponent(query)}`;
-};
-
 const renderWineTitle = (wine: {
   producer?: string | null;
   name?: string | null;
+  isCustom?: boolean | string | number;
   vinaturelProductUrl?: string | null;
   vinaturelId?: string | null;
   vinaturelArticleNumber?: string | null;
   vinaturelExternalId?: string | null;
 }) => {
   const label = `${wine.producer ?? ''} ${wine.name ?? ''}`.trim() || 'Unbekannter Wein';
-  const url = resolveVinaturelUrl(wine, label);
-  return url ? (
+  const link = getWineLink(wine as LinkableWine, label);
+  if (!link) {
+    return <span>{label}</span>;
+  }
+  return (
     <a
-      href={url}
+      href={link}
       target="_blank"
       rel="noopener noreferrer"
       className="text-[#274E37] hover:text-[#e65b2d] hover:underline"
     >
       {label}
     </a>
-  ) : (
-    <span>{label}</span>
   );
 };
 

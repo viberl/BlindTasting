@@ -1,13 +1,4 @@
-import { useLocation } from "wouter";
-
 export default function Footer() {
-  const [location] = useLocation();
-
-  // Don't show footer on auth page
-  if (location === "/auth") {
-    return null;
-  }
-
   return (
     <footer className="bg-gray-50 border-t py-6">
       <div className="container mx-auto px-4">

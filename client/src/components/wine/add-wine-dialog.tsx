@@ -190,6 +190,7 @@ export default function AddWineDialog({ flightId, open, onOpenChange, onWineAdde
       ...data,
       vintage: data.noVintage ? "Kein Jahrgang" : String(data.vintage || ""),
       varietals: data.varietals,
+      isCustom: true,
     });
   };
 
@@ -215,6 +216,10 @@ export default function AddWineDialog({ flightId, open, onOpenChange, onWineAdde
       region: selectedWine.region,
       vintage: String(selectedWine.vintage),
       varietals: varietals,
+      vinaturelId:
+        (selectedWine.articleNumber && String(selectedWine.articleNumber)) ||
+        (selectedWine.externalId && String(selectedWine.externalId)) ||
+        (selectedWine.id ? String(selectedWine.id) : undefined),
       articleNumber: selectedWine.articleNumber,
       externalId: selectedWine.externalId || String(selectedWine.id),
       volumeMl: selectedWine.volumeMl,

@@ -364,6 +364,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           w.varietals AS "varietals",
           w.vinaturel_id AS "vinaturelId",
           w.image_url AS "wineImageUrl",
+          w.is_custom AS "isCustom",
           t.id AS "tastingId",
           t.name AS "tastingName",
           t.completed_at AS "tastingCompletedAt",
@@ -405,6 +406,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           w.varietals AS "varietals",
           w.vinaturel_id AS "vinaturelId",
           w.image_url AS "wineImageUrl",
+          w.is_custom AS "isCustom",
           t.id AS "tastingId",
           t.name AS "tastingName",
           t.completed_at AS "tastingCompletedAt",
@@ -456,6 +458,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           vinaturelExternalId: row.vinaturelExternalId ?? null,
           vinaturelArticleNumber: row.vinaturelArticleNumber ?? null,
           imageUrl: row.vinaturelImageUrl ?? row.wineImageUrl ?? null,
+          isCustom: typeof row.isCustom === 'boolean'
+            ? row.isCustom
+            : typeof row.isCustom === 'string'
+              ? ['true', 't', '1', 'yes', 'y'].includes(row.isCustom.trim().toLowerCase())
+              : typeof row.isCustom === 'number'
+                ? row.isCustom === 1
+                : false,
         },
         tasting: {
           id: Number(row.tastingId),

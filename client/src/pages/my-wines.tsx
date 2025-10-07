@@ -12,6 +12,7 @@ import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { useAuth } from '@/hooks/use-auth';
 import { useFavoriteWines, makeFavoriteKey } from '@/hooks/use-favorite-wines';
+import { getWineLink, LinkableWine } from '@/lib/wine-link-utils';
 
 interface WineInfo {
   id: number;
@@ -27,6 +28,7 @@ interface WineInfo {
   vinaturelExternalId?: string | null;
   vinaturelArticleNumber?: string | null;
   imageUrl?: string | null;
+  isCustom?: boolean | string | number | null;
 }
 
 interface TastingInfo {
@@ -55,31 +57,6 @@ interface WineEntry {
   tasting: TastingInfo;
   flight: FlightInfo | null;
 }
-
-const normalizeVinaturelUrl = (raw?: string | null) => {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
-  return `https://www.vinaturel.de/${trimmed.replace(/^\/+/, '')}`;
-};
-
-const resolveVinaturelUrl = (wine: WineInfo, label?: string) => {
-  const directUrl = normalizeVinaturelUrl(wine.vinaturelProductUrl);
-  if (directUrl) return directUrl;
-
-  const candidates = [
-    wine.vinaturelArticleNumber,
-    wine.vinaturelExternalId,
-    wine.vinaturelId,
-    label,
-  ].map((value) => value?.trim()).filter((value): value is string => !!value);
-
-  if (candidates.length === 0) return null;
-
-  const query = candidates[0];
-  return `https://www.vinaturel.de/search?search=${encodeURIComponent(query)}`;
-};
 
 const resolveWineImageUrl = (wine: WineInfo) => {
   const candidate = wine.imageUrl?.trim();
@@ -120,7 +97,7 @@ const WineCard = ({
   onHostedNoteChange?: (value: string) => void;
 }) => {
   const label = `${entry.wine.producer ?? ''} ${entry.wine.name ?? ''}`.trim() || entry.wine.name || 'Unbekannter Wein';
-  const vinaturelUrl = resolveVinaturelUrl(entry.wine, label);
+  const vinaturelUrl = getWineLink(entry.wine as LinkableWine, label);
   const tastingDate = entry.tasting.completedAt || entry.tasting.createdAt || entry.submittedAt;
   const imageSrc = resolveWineImageUrl(entry.wine);
   const [isEditing, setIsEditing] = useState(false);

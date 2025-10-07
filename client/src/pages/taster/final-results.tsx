@@ -10,6 +10,7 @@ import { apiRequest, queryClient } from '@/lib/queryClient';
 import RankedAvatar from '@/components/tasting/ranked-avatar';
 import { Heart } from 'lucide-react';
 import { useFavoriteWines, makeFavoriteKey } from '@/hooks/use-favorite-wines';
+import { getWineLink, LinkableWine } from '@/lib/wine-link-utils';
 
 type Participant = {
   id: number;
@@ -56,36 +57,6 @@ const formatFlightDisplayName = (orderIndex?: number | null, name?: string | nul
   const trimmed = name.trim();
   if (trimmed.toLowerCase() === defaultName.toLowerCase()) return defaultName;
   return `${defaultName} – ${trimmed}`;
-};
-
-const normalizeVinaturelUrl = (raw?: string | null) => {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
-  return `https://www.vinaturel.de/${trimmed.replace(/^\/+/, '')}`;
-};
-
-const resolveVinaturelUrl = (wine: {
-  vinaturelProductUrl?: string | null;
-  vinaturelId?: string | null;
-  vinaturelArticleNumber?: string | null;
-  vinaturelExternalId?: string | null;
-}, label?: string) => {
-  const directUrl = normalizeVinaturelUrl(wine.vinaturelProductUrl);
-  if (directUrl) return directUrl;
-
-  const candidates = [
-    wine.vinaturelArticleNumber,
-    wine.vinaturelExternalId,
-    wine.vinaturelId,
-    label,
-  ].map((value) => value?.trim()).filter((value): value is string => !!value);
-
-  if (candidates.length === 0) return null;
-
-  const query = candidates[0];
-  return `https://www.vinaturel.de/search?search=${encodeURIComponent(query)}`;
 };
 
 export default function FinalResults() {
@@ -348,12 +319,7 @@ export default function FinalResults() {
                     return base;
                   };
                   const label = `${wine.producer ?? ''} ${wine.name ?? ''}`.trim() || wine.name || 'Wein';
-                  const vinaturelUrl = resolveVinaturelUrl({
-                    vinaturelProductUrl: wine.vinaturelProductUrl,
-                    vinaturelId: wine.vinaturelId,
-                    vinaturelExternalId: wine.vinaturelExternalId,
-                    vinaturelArticleNumber: wine.vinaturelArticleNumber,
-                  }, label);
+                  const vinaturelUrl = getWineLink(wine as LinkableWine, label);
                   const favoriteKey = makeFavoriteKey(tastingId, wine.id);
                   const favorite = isFavorite(favoriteKey);
                   return (

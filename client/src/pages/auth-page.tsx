@@ -98,7 +98,7 @@ export default function AuthPage() {
         <img
           src="/BlindSip_glass_only_cleaned.png"
           alt="BlindSip Glas"
-          className="w-28 h-28 object-contain mb-4"
+          className="w-20 h-20 object-contain mb-4"
           style={{ filter: 'drop-shadow(0 1px 10px rgba(0,0,0,0.07))' }}
         />
         <Card className="border border-vinaturel-highlight shadow-lg bg-white">
