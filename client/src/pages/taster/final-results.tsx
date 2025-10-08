@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, useLocation } from 'wouter';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,6 +14,7 @@ import { getWineLink, LinkableWine } from '@/lib/wine-link-utils';
 import { canonicalizeCountry, canonicalizeRegion } from '@/lib/geo-normalize';
 import { fetchScoringRules } from '@/lib/scoring-rules';
 import type { ScoringRule as DbScoringRule } from '@shared/schema';
+import ConfettiBurst from '@/components/ui/confetti-burst';
 
 type Participant = {
   id: number;
@@ -99,6 +100,13 @@ export default function FinalResults() {
   const me = participants?.find(p => (p as any).userId === user?.id || p.user?.id === user?.id);
   const sorted = participants ? [...participants].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)) : [];
   const rank = me ? sorted.findIndex(p => ((p as any).userId === (me as any).userId) || (p.user?.id === (me as any).user?.id)) + 1 : null;
+  const [hasCelebrated, setHasCelebrated] = useState(false);
+
+  useEffect(() => {
+    if (rank === 1 && !hasCelebrated) {
+      setHasCelebrated(true);
+    }
+  }, [rank, hasCelebrated]);
 
   // Für Weine + eigene Tipps
   const { data: myParticipant } = useQuery<Participant | undefined>({
@@ -172,6 +180,7 @@ export default function FinalResults() {
 
   return (
     <div className="container mx-auto py-10 px-4 max-w-5xl space-y-8">
+      <ConfettiBurst active={hasCelebrated} />
       <Card>
         <CardHeader>
           <CardTitle className="text-2xl">Endergebnis</CardTitle>
