@@ -21,26 +21,19 @@ export function log(message: string, source = "express") {
 
 export async function setupVite(app: Express, server: Server) {
   const serverOptions = {
-    middlewareMode: true,
-    server: {
-      middlewareMode: true,
-      hmr: {
-        server,
-        host: 'localhost',
-        port: 24678,
-        protocol: 'ws',
-        clientPort: 24678
-      },
-      host: '0.0.0.0',
-      allowedHosts: ['localhost', '127.0.0.1'],
-      cors: {
-        origin: true,
-        credentials: true
-      },
-      fs: {
-        strict: false
-      }
-    }
+    middlewareMode: true as const,
+    hmr: {
+      server,
+    },
+    host: '0.0.0.0',
+    allowedHosts: ['localhost', '127.0.0.1'],
+    cors: {
+      origin: true,
+      credentials: true,
+    },
+    fs: {
+      strict: false,
+    },
   };
 
   const vite = await createViteServer({

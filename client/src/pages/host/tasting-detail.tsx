@@ -27,6 +27,7 @@ import { useState, useEffect, useMemo, useRef, type KeyboardEvent, type ReactNod
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import RankedAvatar from "@/components/tasting/ranked-avatar";
+import { canonicalizeCountry, canonicalizeRegion } from "@/lib/geo-normalize";
 
 interface Participant {
   id: number;
@@ -618,6 +619,24 @@ export default function TastingDetailPage() {
   };
   const norm = (s?: string | null) => (s ?? '').toString().trim().toLowerCase();
   const eqTxt = (a?: string | null, b?: string | null) => norm(a) === norm(b);
+  const eqCountry = (actual?: string | null, guess?: string | null) => {
+    const a = canonicalizeCountry(actual);
+    const g = canonicalizeCountry(guess);
+    if (a && g) return a === g;
+    return eqTxt(actual, guess);
+  };
+  const eqRegion = (
+    actualRegion?: string | null,
+    guessRegion?: string | null,
+    actualCountry?: string | null,
+    guessCountry?: string | null,
+  ) => {
+    const baseCountry = canonicalizeCountry(actualCountry) ?? canonicalizeCountry(guessCountry);
+    const a = canonicalizeRegion(actualRegion, baseCountry ?? undefined);
+    const g = canonicalizeRegion(guessRegion, baseCountry ?? undefined);
+    if (a && g) return a === g;
+    return eqTxt(actualRegion, guessRegion);
+  };
   const eqVintage = (a?: string | null, b?: string | null) => {
     const aa = (a ?? '').toString().trim();
     const bb = (b ?? '').toString().trim();
@@ -626,8 +645,12 @@ export default function TastingDetailPage() {
   const computeAuto = (g: Guess, wine: Wine, rules?: ScoringRule) => {
     const r = rules ?? defaultScoring;
     const fields = {
-      country: !!(g.country && r.country > 0 && eqTxt(wine.country, g.country)),
-      region: !!(g.region && r.region > 0 && eqTxt(wine.region, g.region)),
+      country: !!(g.country && r.country > 0 && eqCountry(wine.country, g.country)),
+      region: !!(
+        g.region &&
+        r.region > 0 &&
+        eqRegion(wine.region, g.region, wine.country, g.country)
+      ),
       producer: !!(g.producer && r.producer > 0 && eqTxt(wine.producer, g.producer)),
       name: !!(g.name && r.wineName > 0 && eqTxt(wine.name, g.name)),
       vintage: !!(g.vintage && r.vintage > 0 && eqVintage(wine.vintage, g.vintage)),

@@ -15,18 +15,21 @@ export const countryToRegions: Record<string, string[]> = {
     "Korsika",
   ],
   Italien: [
+    "Abruzzen",
+    "Emilia-Romagna",
+    "Friaul",
+    "Kampanien",
+    "Lombardei",
     "Piemont",
+    "Sardinien",
+    "Sizilien",
+    "Südtirol",
+    "Trentin",
     "Toskana",
     "Venetien",
-    "Südtirol/Trentino",
-    "Sizilien",
-    "Abruzzen",
-    "Kampanien",
     "Apulien",
-    "Lombardei",
     "Marken",
     "Umbrien",
-    "Sardinien",
   ],
   Spanien: [
     "Rioja",
@@ -149,4 +152,3 @@ export const countryToRegions: Record<string, string[]> = {
 };
 
 export const countries: string[] = Object.keys(countryToRegions);
-

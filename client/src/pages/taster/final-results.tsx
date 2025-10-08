@@ -11,6 +11,7 @@ import RankedAvatar from '@/components/tasting/ranked-avatar';
 import { Heart } from 'lucide-react';
 import { useFavoriteWines, makeFavoriteKey } from '@/hooks/use-favorite-wines';
 import { getWineLink, LinkableWine } from '@/lib/wine-link-utils';
+import { canonicalizeCountry, canonicalizeRegion } from '@/lib/geo-normalize';
 
 type Participant = {
   id: number;
@@ -271,6 +272,24 @@ export default function FinalResults() {
                   const r = scoring || { country: 0, region: 0, producer: 0, wineName: 0, vintage: 0, varietals: 0, anyVarietalPoint: true } as ScoringRule;
                   const norm = (s?: string | null) => (s ?? '').toString().trim().toLowerCase();
                   const eqTxt = (a?: string | null, b?: string | null) => norm(a) === norm(b);
+                  const eqCountry = (actual?: string | null, guess?: string | null) => {
+                    const a = canonicalizeCountry(actual);
+                    const g = canonicalizeCountry(guess);
+                    if (a && g) return a === g;
+                    return eqTxt(actual, guess);
+                  };
+                  const eqRegion = (
+                    actualRegion?: string | null,
+                    guessRegion?: string | null,
+                    actualCountry?: string | null,
+                    guessCountry?: string | null,
+                  ) => {
+                    const baseCountry = canonicalizeCountry(actualCountry) ?? canonicalizeCountry(guessCountry);
+                    const a = canonicalizeRegion(actualRegion, baseCountry ?? undefined);
+                    const g = canonicalizeRegion(guessRegion, baseCountry ?? undefined);
+                    if (a && g) return a === g;
+                    return eqTxt(actualRegion, guessRegion);
+                  };
                   const eqVintage = (a?: string | null, b?: string | null) => {
                     const aa = (a ?? '').toString().trim();
                     const bb = (b ?? '').toString().trim();
@@ -280,8 +299,12 @@ export default function FinalResults() {
                   let baseFields = { country: false, region: false, producer: false, name: false, vintage: false, varietals: false } as any;
                   if (g) {
                     baseFields = {
-                      country: !!(g.country && r.country > 0 && eqTxt(wine.country, g.country)),
-                      region: !!(g.region && r.region > 0 && eqTxt(wine.region, g.region)),
+                      country: !!(g.country && r.country > 0 && eqCountry(wine.country, g.country)),
+                      region: !!(
+                        g.region &&
+                        r.region > 0 &&
+                        eqRegion(wine.region, g.region, wine.country, g.country)
+                      ),
                       producer: !!(g.producer && r.producer > 0 && eqTxt(wine.producer, g.producer)),
                       name: !!(g.name && r.wineName > 0 && eqTxt(wine.name, g.name)),
                       vintage: !!(g.vintage && r.vintage > 0 && eqVintage(wine.vintage, g.vintage)),

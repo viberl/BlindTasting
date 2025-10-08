@@ -98,8 +98,169 @@ async function ensureAuthenticated(req: Request, res: Response, next: Function) 
   });
 }
 
-const normalizeText = (value?: string | null) => (value ?? '').toString().trim().toLowerCase();
+const normalizeText = (value?: string | null) =>
+  (value ?? '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+const COUNTRY_ALIAS_MAP = new Map<string, string>();
+const COUNTRY_LABEL_MAP = new Map<string, string>();
+
+const COUNTRY_ALIAS_CONFIG = [
+  { canonical: 'Frankreich', aliases: ['france', 'french'] },
+  { canonical: 'Italien', aliases: ['italy', 'italia'] },
+  { canonical: 'Spanien', aliases: ['spain', 'espana'] },
+  { canonical: 'Deutschland', aliases: ['germany'] },
+  { canonical: 'Österreich', aliases: ['austria', 'austrian', 'osterreich'] },
+  { canonical: 'Schweiz', aliases: ['switzerland', 'suisse'] },
+  { canonical: 'Portugal', aliases: ['portugal', 'portogallo'] },
+  { canonical: 'Griechenland', aliases: ['greece', 'grecia'] },
+  { canonical: 'USA', aliases: ['unitedstates', 'usa', 'unitedstatesofamerica'] },
+  { canonical: 'Chile', aliases: ['chile'] },
+  { canonical: 'Argentinien', aliases: ['argentina', 'argentinia'] },
+  { canonical: 'Australien', aliases: ['australia'] },
+  { canonical: 'Neuseeland', aliases: ['newzealand', 'newzealanders'] },
+  { canonical: 'Südafrika', aliases: ['southafrica'] },
+];
+
+COUNTRY_ALIAS_CONFIG.forEach(({ canonical, aliases }) => {
+  const key = normalizeText(canonical);
+  COUNTRY_ALIAS_MAP.set(key, key);
+  COUNTRY_LABEL_MAP.set(key, canonical);
+  aliases.forEach((alias) => {
+    const normalizedAlias = normalizeText(alias);
+    COUNTRY_ALIAS_MAP.set(normalizedAlias, key);
+    COUNTRY_LABEL_MAP.set(normalizedAlias, canonical);
+  });
+});
+
+const REGION_ALIAS_MAP = new Map<string, string>();
+const REGION_LABEL_MAP = new Map<string, string>();
+const REGION_COUNTRY_MAP = new Map<string, string>();
+[
+  { canonical: 'Elsass', country: 'Frankreich', aliases: ['alsace'] },
+  { canonical: 'Provence', country: 'Frankreich', aliases: ['bandol', 'cotesdeprovence'] },
+  { canonical: 'Rhône (Nord & Süd)', country: 'Frankreich', aliases: ['cotesdurhone', 'cotedurhone', 'chateauneufdupape', 'gigondas', 'vacqueyras', 'hermitage', 'stjoseph', 'saintjoseph', 'crozeshermitage', 'cornas', 'coterotie', 'beaumesdevenise', 'tavel', 'ventoux'] },
+  { canonical: 'Burgund', country: 'Frankreich', aliases: ['bourgogne', 'cotedor', 'cotesdebeaune', 'cotedenuits', 'beaujolais', 'maconnais', 'chablis', 'gevreychambertin', 'nuitsstgeorges', 'nuitsaintgeorges', 'vosneromanee'] },
+  { canonical: 'Loire', country: 'Frankreich', aliases: ['sancerre', 'pouillyfume', 'vouvray', 'chinon', 'muscadet', 'bourgueil', 'anjou', 'saumur'] },
+  { canonical: 'Languedoc-Roussillon', country: 'Frankreich', aliases: ['languedoc', 'picstloup', 'minervois', 'fitou', 'corbieres', 'faugeres', 'limoux'] },
+  { canonical: 'Sud-Ouest', country: 'Frankreich', aliases: ['cahors', 'madiran', 'gaillac', 'jurancon', 'bergerac', 'pecharment'] },
+  {
+    canonical: 'Burgenland',
+    country: 'Österreich',
+    aliases: [
+      'burgenlandneusiedlersee',
+      'neusiedlersee',
+      'neusiedlerseehugelland',
+      'neusiedlersee-hugelland',
+      'mittelburgenland',
+      'seewinkel',
+      'gols',
+      'illmitz',
+      'leithaberg',
+    ],
+  },
+  { canonical: 'Niederösterreich', country: 'Österreich', aliases: ['kamptal', 'kremstal', 'wachau', 'wagram', 'weinviertel', 'traisental'] },
+  { canonical: 'Steiermark', country: 'Österreich', aliases: ['sudsteiermark', 'südsteiermark', 'vulkanland', 'weststeiermark'] },
+  { canonical: 'Südtirol', country: 'Italien', aliases: ['altoadige', 'sudtirol'] },
+  { canonical: 'Trentin', country: 'Italien', aliases: ['trentino', 'trento', 'dolomiti'] },
+  { canonical: 'Venetien', country: 'Italien', aliases: ['veneto'] },
+  { canonical: 'Emilia-Romagna', country: 'Italien', aliases: ['emiliaromagna', 'emilia', 'romagna', 'lambrusco'] },
+  { canonical: 'Friaul', country: 'Italien', aliases: ['friuli', 'friuliveneziagiulia'] },
+  { canonical: 'Lombardei', country: 'Italien', aliases: ['lombardia', 'franciacorta'] },
+].forEach(({ canonical, country, aliases }) => {
+  const key = normalizeText(canonical);
+  REGION_ALIAS_MAP.set(key, key);
+  REGION_LABEL_MAP.set(key, canonical);
+  if (country) {
+    const canonicalCountry = canonicalCountryKey(country);
+    if (canonicalCountry) {
+      REGION_COUNTRY_MAP.set(key, canonicalCountry);
+    }
+  }
+  aliases.forEach((alias) => {
+    const normalizedAlias = normalizeText(alias);
+    REGION_ALIAS_MAP.set(normalizedAlias, key);
+    REGION_LABEL_MAP.set(normalizedAlias, canonical);
+  });
+});
+
+function canonicalCountryKey(value?: string | null): string {
+  const normalized = normalizeText(value);
+  if (!normalized) return '';
+  return COUNTRY_ALIAS_MAP.get(normalized) ?? normalized;
+}
+
+const canonicalCountryLabel = (value?: string | null) => {
+  const key = canonicalCountryKey(value);
+  if (!key) return value ?? null;
+  return COUNTRY_LABEL_MAP.get(key) ?? value ?? null;
+};
+
+const canonicalRegionKey = (value?: string | null) => {
+  const normalized = normalizeText(value);
+  if (!normalized) return '';
+  return REGION_ALIAS_MAP.get(normalized) ?? normalized;
+};
+
+const canonicalRegionLabel = (value?: string | null) => {
+  const key = canonicalRegionKey(value);
+  const label = REGION_LABEL_MAP.get(key);
+  if (value && !label) {
+    console.log('[canonicalRegionLabel] missing alias', { value, normalized: key });
+  }
+  if (!key) return value ?? null;
+  return label ?? value ?? null;
+};
+
+const matchesCountry = (candidate?: string | null, filter?: string | null) => {
+  const canonicalFilter = canonicalCountryKey(filter);
+  if (!canonicalFilter) return true;
+  const canonicalCandidate = canonicalCountryKey(candidate);
+  if (!canonicalCandidate) return false;
+  return (
+    canonicalCandidate === canonicalFilter ||
+    canonicalCandidate.includes(canonicalFilter) ||
+    canonicalFilter.includes(canonicalCandidate)
+  );
+};
+
+const matchesRegion = (candidate?: string | null, filter?: string | null) => {
+  const canonicalFilter = canonicalRegionKey(filter);
+  if (!canonicalFilter) return true;
+  const canonicalCandidate = canonicalRegionKey(candidate);
+  if (!canonicalCandidate) return false;
+  return (
+    canonicalCandidate === canonicalFilter ||
+    canonicalCandidate.includes(canonicalFilter) ||
+    canonicalFilter.includes(canonicalCandidate)
+  );
+};
+
+const canonicalizeProducerName = (name?: string | null) => {
+  if (!name) return '';
+  return name
+    .replace(/^(?:domaine|domaines|weingut|cantina|azienda|tenuta|tenute|bodega|ch(?:ateau|\u00e2teau)|clos)\s+/i, '')
+    .replace(/^(?:de\s+|du\s+|des\s+)/i, '')
+    .trim();
+};
+
 const equalText = (a?: string | null, b?: string | null) => normalizeText(a) === normalizeText(b);
+const equalCountryText = (a?: string | null, b?: string | null) => {
+  const keyA = canonicalCountryKey(a);
+  const keyB = canonicalCountryKey(b);
+  if (!keyA || !keyB) return equalText(a, b);
+  return keyA === keyB;
+};
+const equalRegionText = (a?: string | null, b?: string | null) => {
+  const keyA = canonicalRegionKey(a);
+  const keyB = canonicalRegionKey(b);
+  if (!keyA || !keyB) return equalText(a, b);
+  return keyA === keyB;
+};
 const equalVintage = (a?: string | null, b?: string | null) => {
   const aa = (a ?? '').toString().trim();
   const bb = (b ?? '').toString().trim();
@@ -110,10 +271,10 @@ const calculateGuessScore = (guess: Guess, wine: Wine, rules: ScoringRule): numb
   if (!rules) return guess.score ?? 0;
 
   let score = 0;
-  if (rules.country > 0 && guess.country && equalText(guess.country, wine.country)) {
+  if (rules.country > 0 && guess.country && equalCountryText(guess.country, wine.country)) {
     score += rules.country;
   }
-  if (rules.region > 0 && guess.region && equalText(guess.region, wine.region)) {
+  if (rules.region > 0 && guess.region && equalRegionText(guess.region, wine.region)) {
     score += rules.region;
   }
   if (rules.producer > 0 && guess.producer && equalText(guess.producer, wine.producer)) {
@@ -276,6 +437,403 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: 'Failed to search wines',
         error: error instanceof Error ? error.message : 'Unknown error'
       });
+    }
+  });
+
+  app.get('/api/wine-suggestions/producers', ensureAuthenticated, async (req, res) => {
+    try {
+      const searchRaw = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      const searchLower = searchRaw.toLowerCase();
+      const limitRaw = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : undefined;
+      const limit = Number.isFinite(limitRaw) && limitRaw ? Math.min(Math.max(limitRaw, 5), 500) : 300;
+      const searchTerm = searchLower ? `%${searchLower}%` : null;
+
+      const producersResult = await db.execute(sql`
+        WITH combined AS (
+          SELECT
+            LOWER(TRIM(producer)) AS producer_key,
+            MIN(producer) AS display_name,
+            MIN(NULLIF(TRIM(country), '')) FILTER (WHERE TRIM(country) <> '') AS country_hint,
+            MIN(NULLIF(TRIM(region), '')) FILTER (WHERE TRIM(region) <> '') AS region_hint,
+            COUNT(*)::int AS vin_count,
+            0::int AS custom_count
+          FROM vinaturel_wines
+          ${searchTerm ? sql`WHERE LOWER(producer) LIKE ${searchTerm}` : sql``}
+          GROUP BY LOWER(TRIM(producer))
+
+          UNION ALL
+
+          SELECT
+            producer_key,
+            MIN(producer) AS display_name,
+            MIN(NULLIF(TRIM(country), '')) FILTER (WHERE TRIM(country) <> '') AS country_hint,
+            MIN(NULLIF(TRIM(region), '')) FILTER (WHERE TRIM(region) <> '') AS region_hint,
+            0::int AS vin_count,
+            COUNT(*)::int AS custom_count
+          FROM custom_wine_suggestions
+          ${searchTerm ? sql`WHERE producer_key LIKE ${searchTerm}` : sql``}
+          GROUP BY producer_key
+        )
+        SELECT
+          producer_key,
+          MIN(display_name) AS producer,
+          MAX(country_hint) AS country,
+          MAX(region_hint) AS region,
+          SUM(vin_count)::int AS vinaturel_count,
+          SUM(custom_count)::int AS custom_count
+        FROM combined
+        GROUP BY producer_key
+        ORDER BY MIN(display_name)
+        LIMIT ${limit}
+      `);
+
+      const countryFilter = typeof req.query.country === 'string' ? req.query.country : undefined;
+      const regionFilter = typeof req.query.region === 'string' ? req.query.region : undefined;
+
+      const aggregated = new Map<string, {
+        name: string;
+        vinaturel: boolean;
+        custom: boolean;
+        vinaturelCount: number;
+        customCount: number;
+        countries: Set<string>;
+        regions: Set<string>;
+      }>();
+
+      for (const row of producersResult.rows ?? []) {
+        const rawName = typeof row.producer === 'string' ? row.producer.trim() : '';
+        if (!rawName) continue;
+        const canonicalName = canonicalizeProducerName(rawName) || rawName;
+        const key = normalizeText(canonicalName);
+        if (!key) continue;
+
+        const trimmedCountry = typeof row.country === 'string' ? row.country.trim() : '';
+        const trimmedRegion = typeof row.region === 'string' ? row.region.trim() : '';
+        const canonicalCountryDisplay = canonicalCountryLabel(trimmedCountry);
+        const canonicalRegion = canonicalRegionLabel(trimmedRegion);
+        const vinCount = Number(row.vinaturel_count ?? 0) || 0;
+        const customCount = Number(row.custom_count ?? 0) || 0;
+
+        const existing = aggregated.get(key);
+        if (existing) {
+          existing.vinaturel = existing.vinaturel || vinCount > 0;
+          existing.custom = existing.custom || customCount > 0;
+          existing.vinaturelCount += vinCount;
+          existing.customCount += customCount;
+          if (canonicalCountryDisplay) existing.countries.add(canonicalCountryDisplay);
+          if (trimmedCountry) existing.countries.add(trimmedCountry);
+          if (canonicalRegion) existing.regions.add(canonicalRegion);
+          if (trimmedRegion) existing.regions.add(trimmedRegion);
+        } else {
+          aggregated.set(key, {
+            name: canonicalName,
+            vinaturel: vinCount > 0,
+            custom: customCount > 0,
+            vinaturelCount: vinCount,
+            customCount,
+            countries: new Set([
+              canonicalCountryDisplay || trimmedCountry || ''
+            ].filter(Boolean) as string[]),
+            regions: new Set([
+              canonicalRegion || trimmedRegion || ''
+            ].filter(Boolean) as string[]),
+          });
+        }
+      }
+
+      const austrian = Array.from(aggregated.entries()).filter(([, p]) =>
+        Array.from(p.countries).some((c) => matchesCountry(c, 'Österreich'))
+      );
+      console.log('[producers] austrian producers', austrian.length);
+      const austrianAlt = Array.from(aggregated.entries()).filter(([, p]) =>
+        Array.from(p.countries).some((c) => normalizeText(c) === 'austria')
+      );
+      console.log('[producers] sample austria canonical', austrian.slice(0, 10).map(([key, p]) => ({ key, name: p.name, countries: Array.from(p.countries), regions: Array.from(p.regions) })));
+      console.log('[producers] sample austria alias', austrianAlt.slice(0, 10).map(([key, p]) => ({ key, name: p.name, countries: Array.from(p.countries), regions: Array.from(p.regions) })));
+
+      console.log('[producers] debug Heinrich', aggregated.get(normalizeText(canonicalizeProducerName('Heinrich'))));
+      console.log('[producers] debug Moric', aggregated.get(normalizeText(canonicalizeProducerName('Moric'))));
+
+      const producers = Array.from(aggregated.values())
+        .filter((item) => {
+          if (!item.name || item.name.trim().length === 0) return false;
+          const countryMatches = !countryFilter || Array.from(item.countries).some((c) => matchesCountry(c, countryFilter));
+          const regionMatches = !regionFilter || Array.from(item.regions).some((r) => matchesRegion(r, regionFilter));
+          if (!regionMatches) return false;
+          if (!countryMatches && countryFilter) {
+            // allow entries whose region matches even if country metadata deviates
+            const inferredCountry = REGION_COUNTRY_MAP.get(canonicalRegionKey(Array.from(item.regions)[0] || ''));
+            if (!inferredCountry || !matchesCountry(inferredCountry, countryFilter)) {
+              return false;
+            }
+          }
+          return true;
+        })
+        .map((item) => {
+          const countryLabelRaw = Array.from(item.countries).find((c) => matchesCountry(c, countryFilter))
+            || Array.from(item.countries)[0]
+            || null;
+          const countryLabel = canonicalCountryLabel(countryLabelRaw);
+          const regionLabel = Array.from(item.regions).find((r) => matchesRegion(r, regionFilter))
+            || Array.from(item.regions)[0]
+            || null;
+          return {
+            name: item.name,
+            vinaturel: item.vinaturel,
+            custom: item.custom,
+            vinaturelCount: item.vinaturelCount,
+            customCount: item.customCount,
+            country: countryLabel,
+            region: canonicalRegionLabel(regionLabel),
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name, 'de', { sensitivity: 'base' }));
+
+      console.log('[producers] filter', {
+        countryFilter,
+        regionFilter,
+        total: aggregated.size,
+        after: producers.length,
+        names: producers.map((p) => ({ name: p.name, country: p.country, region: p.region })),
+      });
+
+      res.json({ producers });
+    } catch (error) {
+      console.error('Error loading producer suggestions:', error);
+      res.status(500).json({ error: 'Producer suggestions could not be loaded' });
+    }
+  });
+
+  app.get('/api/wine-suggestions/producers/detail', ensureAuthenticated, async (req, res) => {
+    try {
+      const rawName = typeof req.query.name === 'string' ? req.query.name.trim() : '';
+      if (!rawName) {
+        return res.status(400).json({ error: 'Parameter "name" ist erforderlich' });
+      }
+
+      const producerKey = rawName.toLowerCase();
+
+      const result = await db.execute(sql`
+        WITH candidates AS (
+          SELECT
+            producer,
+            NULLIF(TRIM(country), '') AS country,
+            NULLIF(TRIM(region), '') AS region,
+            0 AS priority
+          FROM vinaturel_wines
+          WHERE LOWER(TRIM(producer)) = ${producerKey}
+
+          UNION ALL
+
+          SELECT
+            producer,
+            NULLIF(TRIM(country), '') AS country,
+            NULLIF(TRIM(region), '') AS region,
+            1 AS priority
+          FROM custom_wine_suggestions
+          WHERE producer_key = ${producerKey}
+        )
+        SELECT producer, country, region
+        FROM candidates
+        ORDER BY
+          (country IS NULL)::int,
+          (region IS NULL)::int,
+          priority,
+          producer
+        LIMIT 1
+      `);
+
+      const row = result.rows?.[0] as any;
+      if (!row) {
+        return res.json({ detail: null });
+      }
+
+      res.json({
+        detail: {
+          producer: row.producer,
+          country: row.country ? String(row.country).trim() : null,
+          region: row.region ? String(row.region).trim() : null,
+        },
+      });
+    } catch (error) {
+      console.error('Error loading producer detail:', error);
+      res.status(500).json({ error: 'Producer detail could not be loaded' });
+    }
+  });
+
+  app.get('/api/wine-suggestions/names', ensureAuthenticated, async (req, res) => {
+    try {
+      const producerRaw = typeof req.query.producer === 'string' ? req.query.producer.trim() : '';
+      if (!producerRaw) {
+        return res.status(400).json({ error: 'Parameter "producer" ist erforderlich' });
+      }
+
+      const producerKey = producerRaw.toLowerCase();
+      const countryFilter = typeof req.query.country === 'string' ? req.query.country : undefined;
+      const regionFilter = typeof req.query.region === 'string' ? req.query.region : undefined;
+      const searchRaw = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      const searchLower = searchRaw.toLowerCase();
+      const limitRaw = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : undefined;
+      const limit = Number.isFinite(limitRaw) && limitRaw ? Math.min(Math.max(limitRaw, 5), 200) : 75;
+      const searchTerm = searchLower ? `%${searchLower}%` : null;
+
+      const winesResult = await db.execute(sql`
+        WITH combined AS (
+          SELECT
+            LOWER(TRIM(name)) AS name_key,
+            MIN(name) AS display_name,
+            MIN(NULLIF(TRIM(country), '')) FILTER (WHERE TRIM(country) <> '') AS country_hint,
+            MIN(NULLIF(TRIM(region), '')) FILTER (WHERE TRIM(region) <> '') AS region_hint,
+            COUNT(*)::int AS vin_count,
+            0::int AS custom_count
+          FROM vinaturel_wines
+          WHERE LOWER(TRIM(producer)) = ${producerKey}
+          ${searchTerm ? sql`AND LOWER(name) LIKE ${searchTerm}` : sql``}
+          GROUP BY LOWER(TRIM(name))
+
+          UNION ALL
+
+          SELECT
+            name_key,
+            MIN(name) AS display_name,
+            MIN(NULLIF(TRIM(country), '')) FILTER (WHERE TRIM(country) <> '') AS country_hint,
+            MIN(NULLIF(TRIM(region), '')) FILTER (WHERE TRIM(region) <> '') AS region_hint,
+            0::int AS vin_count,
+            COUNT(*)::int AS custom_count
+          FROM custom_wine_suggestions
+          WHERE producer_key = ${producerKey}
+          ${searchTerm ? sql`AND name_key LIKE ${searchTerm}` : sql``}
+          GROUP BY name_key
+        )
+        SELECT
+          name_key,
+          MIN(display_name) AS wine_name,
+          MAX(country_hint) AS country,
+          MAX(region_hint) AS region,
+          SUM(vin_count)::int AS vinaturel_count,
+          SUM(custom_count)::int AS custom_count
+        FROM combined
+        GROUP BY name_key
+        ORDER BY MIN(display_name)
+        LIMIT ${limit}
+      `);
+
+      const wines = (winesResult.rows ?? [])
+        .map((row: any) => {
+          const trimmedCountry = typeof row.country === 'string' ? row.country.trim() : '';
+          const trimmedRegion = typeof row.region === 'string' ? row.region.trim() : '';
+          return {
+            name: row.wine_name,
+            vinaturel: Number(row.vinaturel_count ?? 0) > 0,
+            custom: Number(row.custom_count ?? 0) > 0,
+            vinaturelCount: Number(row.vinaturel_count ?? 0) || 0,
+            customCount: Number(row.custom_count ?? 0) || 0,
+            country: trimmedCountry || null,
+            region: canonicalRegionLabel(trimmedRegion),
+          };
+        })
+        .filter((item) => {
+          if (!item.name || item.name.trim().length === 0) return false;
+          if (!matchesCountry(item.country, countryFilter)) return false;
+          if (!matchesRegion(item.region, regionFilter)) return false;
+          return true;
+        })
+        .sort((a, b) => a.name.localeCompare(b.name, 'de', { sensitivity: 'base' }));
+
+      res.json({ wines });
+    } catch (error) {
+      console.error('Error loading wine suggestions:', error);
+      res.status(500).json({ error: 'Wine suggestions could not be loaded' });
+    }
+  });
+
+  app.get('/api/wine-suggestions/detail', ensureAuthenticated, async (req, res) => {
+    try {
+      const producerRaw = typeof req.query.producer === 'string' ? req.query.producer.trim() : '';
+      if (!producerRaw) {
+        return res.status(400).json({ error: 'Parameter "producer" ist erforderlich' });
+      }
+
+      const producerKey = producerRaw.toLowerCase();
+      const wineRaw = typeof req.query.wine === 'string' ? req.query.wine.trim() : '';
+      const wineKey = wineRaw ? wineRaw.toLowerCase() : null;
+
+      const detailResult = await db.execute(sql`
+        WITH candidates AS (
+          SELECT
+            producer,
+            name,
+            NULLIF(TRIM(country), '') AS country,
+            NULLIF(TRIM(region), '') AS region,
+            0 AS priority
+          FROM vinaturel_wines
+          WHERE LOWER(TRIM(producer)) = ${producerKey}
+            ${wineKey ? sql`AND LOWER(TRIM(name)) = ${wineKey}` : sql``}
+
+          UNION ALL
+
+          SELECT
+            producer,
+            name,
+            NULLIF(TRIM(country), '') AS country,
+            NULLIF(TRIM(region), '') AS region,
+            1 AS priority
+          FROM custom_wine_suggestions
+          WHERE producer_key = ${producerKey}
+            ${wineKey ? sql`AND name_key = ${wineKey}` : sql``}
+        )
+        SELECT producer, name, country, region
+        FROM candidates
+        ORDER BY
+          (country IS NULL)::int,
+          (region IS NULL)::int,
+          priority,
+          name
+        LIMIT 1
+      `);
+
+      const row = detailResult.rows?.[0] as any;
+      if (!row) {
+        return res.json({ detail: null });
+      }
+
+      res.json({
+        detail: {
+          producer: row.producer,
+          name: row.name,
+          country: row.country ? String(row.country).trim() : null,
+          region: row.region ? String(row.region).trim() : null,
+        },
+      });
+    } catch (error) {
+      console.error('Error loading wine suggestion detail:', error);
+      res.status(500).json({ error: 'Wine suggestion detail could not be loaded' });
+    }
+  });
+
+  app.delete('/api/wine-suggestions/custom', ensureAuthenticated, async (req, res) => {
+    try {
+      const confirm = typeof req.query.confirm === 'string' ? req.query.confirm.toLowerCase() === 'true' : false;
+      if (!confirm) {
+        return res.status(400).json({
+          error: 'Bestätigung erforderlich',
+          message: 'Fügen Sie ?confirm=true hinzu, um alle eigenen Weinvorschläge zu löschen.',
+        });
+      }
+
+      const deletionResult = await db.execute(sql`
+        WITH deleted AS (
+          DELETE FROM custom_wine_suggestions
+          RETURNING 1
+        )
+        SELECT COUNT(*)::int AS count FROM deleted
+      `);
+
+      const removed = Number((deletionResult.rows?.[0] as any)?.count ?? 0);
+      res.json({ removed });
+    } catch (error) {
+      console.error('Error clearing custom wine suggestions:', error);
+      res.status(500).json({ error: 'Custom wine suggestions could not be cleared' });
     }
   });
 
@@ -2560,7 +3118,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const httpServer = createServer(app);
   // WebSocket server for live participant updates on join page
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws/join' });
+  const wss = new WebSocketServer({ noServer: true });
+
+  httpServer.on('upgrade', (req, socket, head) => {
+    const url = req.url || '';
+    if (!url.startsWith('/ws/join')) {
+      return;
+    }
+
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
+  });
   wss.on('connection', async (socket, req) => {
     try {
       // Parse query parameters

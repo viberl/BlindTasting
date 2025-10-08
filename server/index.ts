@@ -115,6 +115,45 @@ app.use((req, res, next) => {
     await db.execute(sql`ALTER TABLE "vinaturel_wines" ADD COLUMN IF NOT EXISTS "varietal_2" text`);
     await db.execute(sql`ALTER TABLE "vinaturel_wines" ADD COLUMN IF NOT EXISTS "varietal_3" text`);
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "custom_wine_suggestions" (
+        "id" serial PRIMARY KEY,
+        "producer" text NOT NULL,
+        "name" text NOT NULL,
+        "producer_key" text NOT NULL,
+        "name_key" text NOT NULL,
+        "country" text,
+        "region" text,
+        "created_at" timestamp with time zone DEFAULT now(),
+        "updated_at" timestamp with time zone DEFAULT now()
+      )
+    `);
+
+    await db.execute(sql`ALTER TABLE "custom_wine_suggestions" ADD COLUMN IF NOT EXISTS "producer_key" text`);
+    await db.execute(sql`ALTER TABLE "custom_wine_suggestions" ADD COLUMN IF NOT EXISTS "name_key" text`);
+    await db.execute(sql`ALTER TABLE "custom_wine_suggestions" ADD COLUMN IF NOT EXISTS "country" text`);
+    await db.execute(sql`ALTER TABLE "custom_wine_suggestions" ADD COLUMN IF NOT EXISTS "region" text`);
+
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "custom_wine_suggestions_unique_idx"
+      ON "custom_wine_suggestions" ("producer_key", "name_key")
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "custom_wine_suggestions_producer_idx"
+      ON "custom_wine_suggestions" ("producer_key")
+    `);
+
+    // Backfill keys for legacy rows (if table existed before without key columns)
+    await db.execute(sql`
+      UPDATE "custom_wine_suggestions"
+      SET
+        producer_key = LOWER(TRIM(producer)),
+        name_key = LOWER(TRIM(name))
+      WHERE (producer_key IS NULL OR producer_key = '')
+         OR (name_key IS NULL OR name_key = '')
+    `);
+
     await db.execute(sql`ALTER TABLE "tastings" ADD COLUMN IF NOT EXISTS "show_rating_field" boolean DEFAULT true NOT NULL`);
     await db.execute(sql`ALTER TABLE "tastings" ADD COLUMN IF NOT EXISTS "show_notes_field" boolean DEFAULT true NOT NULL`);
     await db.execute(sql`ALTER TABLE "flights" ADD COLUMN IF NOT EXISTS "review_approved_at" timestamp`);

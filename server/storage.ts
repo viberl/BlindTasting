@@ -28,6 +28,54 @@ type WineWithVinaturelMeta = Wine & {
   imageUrl?: string | null;
 };
 
+// Upper bound for Postgres integer columns; helps avoid out-of-range casts
+const POSTGRES_MAX_INT = 2147483647;
+
+const parseNumericVinaturelId = (rawId: string): number | null => {
+  if (!/^\d+$/.test(rawId)) {
+    return null;
+  }
+  const numeric = Number(rawId);
+  if (!Number.isSafeInteger(numeric) || numeric < 0 || numeric > POSTGRES_MAX_INT) {
+    return null;
+  }
+  return numeric;
+};
+
+const normalizeKey = (value: string) => value.trim().toLowerCase();
+
+async function upsertCustomWineSuggestion(options: {
+  producer?: string | null;
+  name?: string | null;
+  country?: string | null;
+  region?: string | null;
+}) {
+  const { producer, name, country, region } = options;
+  const trimmedProducer = producer?.trim();
+  const trimmedName = name?.trim();
+  if (!trimmedProducer || !trimmedName) {
+    return;
+  }
+  const producerKey = normalizeKey(trimmedProducer);
+  const nameKey = normalizeKey(trimmedName);
+  if (!producerKey || !nameKey) {
+    return;
+  }
+
+  await db.execute(sql`
+    INSERT INTO custom_wine_suggestions
+      (producer, name, producer_key, name_key, country, region, created_at, updated_at)
+    VALUES
+      (${trimmedProducer}, ${trimmedName}, ${producerKey}, ${nameKey}, ${country ?? null}, ${region ?? null}, NOW(), NOW())
+    ON CONFLICT (producer_key, name_key) DO UPDATE SET
+      producer = EXCLUDED.producer,
+      name = EXCLUDED.name,
+      country = COALESCE(EXCLUDED.country, custom_wine_suggestions.country),
+      region = COALESCE(EXCLUDED.region, custom_wine_suggestions.region),
+      updated_at = NOW()
+  `);
+}
+
 const tastingStore: {
   hosted: TastingWithHost[];
   participating: TastingWithHost[];
@@ -570,7 +618,20 @@ export class MemStorage implements IStorage {
       imageUrl: wineData.imageUrl ?? null
     };
     const result = await db.insert(wines).values(fullWine).returning();
-    return result[0];
+    const created = result[0];
+    if (fullWine.isCustom) {
+      try {
+        await upsertCustomWineSuggestion({
+          producer: fullWine.producer,
+          name: fullWine.name,
+          country: fullWine.country,
+          region: fullWine.region,
+        });
+      } catch (error) {
+        console.warn('[createWine] Failed to upsert custom wine suggestion', error);
+      }
+    }
+    return created;
   }
 
   async getWinesByFlight(flightId: number): Promise<WineWithVinaturelMeta[]> {
@@ -590,14 +651,14 @@ export class MemStorage implements IStorage {
       if (!identifier) return null;
       if (metaCache.has(identifier)) return metaCache.get(identifier)!;
 
-      const isNumeric = /^\d+$/.test(identifier);
+      const numericId = parseNumericVinaturelId(identifier);
       let meta: { productUrl: string | null; externalId: string | null; articleNumber: string | null } | null = null;
 
-      if (isNumeric) {
+      if (numericId !== null) {
         const byId = await db.execute(sql`
           SELECT product_url as "productUrl", external_id as "externalId", article_number as "articleNumber"
           FROM vinaturel_wines
-          WHERE id = ${Number(identifier)}
+          WHERE id = ${numericId}
           LIMIT 1
         `);
         meta = (byId.rows?.[0] as any) ?? null;
@@ -651,14 +712,14 @@ export class MemStorage implements IStorage {
     const identifier = wine.vinaturelId?.trim();
     if (!identifier) return wine;
 
-    const isNumeric = /^\d+$/.test(identifier);
+    const numericId = parseNumericVinaturelId(identifier);
     let meta: { productUrl: string | null; externalId: string | null; articleNumber: string | null } | null = null;
 
-    if (isNumeric) {
+    if (numericId !== null) {
       const byId = await db.execute(sql`
         SELECT product_url as "productUrl", external_id as "externalId", article_number as "articleNumber"
         FROM vinaturel_wines
-        WHERE id = ${Number(identifier)}
+        WHERE id = ${numericId}
         LIMIT 1
       `);
       meta = (byId.rows?.[0] as any) ?? null;
@@ -2081,7 +2142,20 @@ export class DatabaseStorage implements IStorage {
       imageUrl: wine.imageUrl ?? null
     };
     const result = await db.insert(wines).values(fullWine).returning();
-    return result[0];
+    const created = result[0];
+    if (fullWine.isCustom) {
+      try {
+        await upsertCustomWineSuggestion({
+          producer: fullWine.producer,
+          name: fullWine.name,
+          country: fullWine.country,
+          region: fullWine.region,
+        });
+      } catch (error) {
+        console.warn('[createWine] Failed to upsert custom wine suggestion', error);
+      }
+    }
+    return created;
   }
 
   async getWinesByFlight(flightId: number): Promise<WineWithVinaturelMeta[]> {
@@ -2103,10 +2177,17 @@ export class DatabaseStorage implements IStorage {
       return baseWines;
     }
 
-    const numericVinaturelIds = vinaturelIds
-      .filter((id) => /^\d+$/.test(id))
-      .map((id) => Number(id));
-    const externalVinaturelIds = vinaturelIds.filter((id) => !/^\d+$/.test(id));
+    const numericVinaturelIds: number[] = [];
+    const externalVinaturelIds: string[] = [];
+
+    for (const rawId of vinaturelIds) {
+      const numericId = parseNumericVinaturelId(rawId);
+      if (numericId !== null) {
+        numericVinaturelIds.push(numericId);
+      } else {
+        externalVinaturelIds.push(rawId);
+      }
+    }
 
     const vinaturelRows: Array<{
       id: number;
@@ -2160,8 +2241,9 @@ export class DatabaseStorage implements IStorage {
       const key = wine.vinaturelId?.trim();
       let matched: typeof vinaturelRows[number] | undefined;
       if (key) {
-        if (/^\d+$/.test(key)) {
-          matched = mapById.get(Number(key)) || mapByExternal.get(key) || mapByArticle.get(key);
+        const numericKey = parseNumericVinaturelId(key);
+        if (numericKey !== null) {
+          matched = mapById.get(numericKey) || mapByExternal.get(key) || mapByArticle.get(key);
         } else {
           matched = mapByExternal.get(key) || mapByArticle.get(key);
         }
@@ -2187,7 +2269,7 @@ export class DatabaseStorage implements IStorage {
     const key = wine.vinaturelId?.trim();
     if (!key) return wine;
 
-    const numeric = /^\d+$/.test(key);
+    const numericKey = parseNumericVinaturelId(key);
     const candidates = await db
       .select({
         id: vinaturelWines.id,
@@ -2197,9 +2279,9 @@ export class DatabaseStorage implements IStorage {
       })
       .from(vinaturelWines)
       .where(
-        numeric
+        numericKey !== null
           ? or(
-              eq(vinaturelWines.id, Number(key)),
+              eq(vinaturelWines.id, numericKey),
               eq(vinaturelWines.externalId, key),
               eq(vinaturelWines.articleNumber, key)
             )

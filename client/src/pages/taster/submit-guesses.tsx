@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
@@ -55,8 +55,16 @@ import {
 import clsx from 'clsx';
 import { useToast } from "@/hooks/use-toast";
 import FlightTimer from "@/components/flight/flight-timer";
-import { countries as COUNTRY_LIST, countryToRegions } from "@/data/country-regions";
+import { countries as COUNTRY_LIST } from "@/data/country-regions";
 import VarietalCombobox from "@/components/wine/varietal-combobox";
+import ProducerCombobox, { type ProducerSuggestion } from "@/components/wine/producer-combobox";
+import WineNameCombobox, { type WineSuggestion } from "@/components/wine/wine-name-combobox";
+import { API_BASE_URL } from "@/config";
+import {
+  canonicalizeCountry,
+  canonicalizeRegion,
+  getRegionsForCountry,
+} from "@/lib/geo-normalize";
 
 // Options for dropdowns (German)
 const countries = COUNTRY_LIST;
@@ -261,6 +269,195 @@ export default function SubmitGuesses() {
     },
   });
 
+  const countryValue = form.watch("country");
+  const regionValue = form.watch("region");
+  const producerValue = form.watch("producer");
+  const canonicalCountry = canonicalizeCountry(countryValue);
+  const canonicalRegion = canonicalizeRegion(regionValue, canonicalCountry);
+  const previousProducerRef = useRef<string | null>(null);
+
+  const handleClearCountry = useCallback(() => {
+    form.setValue("country", "", { shouldDirty: true, shouldTouch: true });
+    form.setValue("region", "", { shouldDirty: true, shouldTouch: true });
+    setAvailableRegions([]);
+  }, [form]);
+
+  const handleClearRegion = useCallback(() => {
+    form.setValue("region", "", { shouldDirty: true, shouldTouch: true });
+  }, [form]);
+
+  const handleClearProducer = useCallback(() => {
+    form.setValue("producer", "", { shouldDirty: true, shouldTouch: true });
+    form.setValue("name", "", { shouldDirty: true, shouldTouch: true });
+  }, [form]);
+
+  const handleClearWine = useCallback(() => {
+    form.setValue("name", "", { shouldDirty: true, shouldTouch: true });
+  }, [form]);
+
+  const applySuggestionGeography = useCallback(async (
+    params: {
+      producer?: string | null;
+      wine?: string | null;
+      country?: string | null;
+      region?: string | null;
+    }
+  ) => {
+    try {
+      const producerName = params.producer?.trim();
+      const wineName = params.wine?.trim();
+
+      let nextCountry = canonicalizeCountry(params.country);
+      let nextRegion = canonicalizeRegion(params.region, nextCountry);
+
+      const syncAvailableRegions = (country: string | null, region: string | null) => {
+        if (!country) return;
+        setAvailableRegions(() => {
+          const merged = new Set(getRegionsForCountry(country));
+          if (region) merged.add(region);
+          return Array.from(merged);
+        });
+      };
+
+      const fetchProducerDetail = async () => {
+        if (!producerName) return;
+        try {
+          const res = await fetch(
+            `${API_BASE_URL}/api/wine-suggestions/producers/detail?name=${encodeURIComponent(producerName)}`,
+            { credentials: "include" }
+          );
+          if (!res.ok) return;
+          const json = await res.json();
+          const detail = json?.detail;
+          if (!detail) return;
+          if (!nextCountry) {
+            nextCountry = canonicalizeCountry(detail.country);
+          }
+          if (!nextRegion) {
+            nextRegion = canonicalizeRegion(detail.region, nextCountry);
+          }
+        } catch (error) {
+          console.warn('[applySuggestionGeography] producer detail failed', error);
+        }
+      };
+
+      const fetchSuggestionFallback = async () => {
+        if (!producerName) return;
+        try {
+          const params = new URLSearchParams({ producer: producerName, limit: "10" });
+          if (wineName) params.set("q", wineName);
+          const res = await fetch(
+            `${API_BASE_URL}/api/wine-suggestions/names?${params.toString()}`,
+            { credentials: "include" }
+          );
+          if (!res.ok) return;
+          const json = await res.json();
+          const wines: WineSuggestion[] = json?.wines ?? [];
+          if (!Array.isArray(wines) || wines.length === 0) return;
+          const lowerName = wineName?.toLowerCase();
+          const candidate = lowerName
+            ? wines.find((w) => w.name.toLowerCase() === lowerName)
+            : wines[0];
+          if (candidate) {
+            if (!nextCountry) {
+              nextCountry = canonicalizeCountry(candidate.country);
+            }
+            if (!nextRegion) {
+              nextRegion = canonicalizeRegion(candidate.region, nextCountry);
+            }
+          }
+        } catch (error) {
+          console.warn('[applySuggestionGeography] wine suggestion fallback failed', error);
+        }
+
+        if ((!nextCountry || !nextRegion) && producerName) {
+          try {
+            const parts = [producerName];
+            if (wineName) parts.push(wineName);
+            const res = await fetch(
+              `${API_BASE_URL}/api/vinaturel/search?q=${encodeURIComponent(parts.join(" "))}`,
+              { credentials: "include" }
+            );
+            if (!res.ok) return;
+            const json = await res.json();
+            const results: Array<{ country?: string | null; region?: string | null }> = json?.data?.data || json?.data || [];
+            if (!Array.isArray(results) || results.length === 0) return;
+            if (!nextCountry) {
+              const firstCountry = results.find((r) => r.country)?.country;
+              nextCountry = canonicalizeCountry(firstCountry ?? null);
+            }
+            if (!nextRegion) {
+              const firstRegion = results.find((r) => r.region)?.region;
+              nextRegion = canonicalizeRegion(firstRegion ?? null, nextCountry);
+            }
+          } catch (error) {
+            console.warn('[applySuggestionGeography] vinaturel fallback failed', error);
+          }
+        }
+      };
+
+      if ((!nextCountry || !nextRegion) && producerName) {
+        await fetchProducerDetail();
+      }
+
+      if ((!nextCountry || !nextRegion) && producerName) {
+        await fetchSuggestionFallback();
+      }
+
+      nextCountry = canonicalizeCountry(nextCountry);
+      nextRegion = canonicalizeRegion(nextRegion, nextCountry);
+
+      if (nextCountry) {
+        const currentCountry = (form.getValues("country") || "").trim();
+        if (currentCountry !== nextCountry) {
+          form.setValue("country", nextCountry, { shouldDirty: false, shouldTouch: false });
+        }
+      }
+
+      if (nextRegion) {
+        const currentRegion = (form.getValues("region") || "").trim();
+        if (currentRegion !== nextRegion) {
+          form.setValue("region", nextRegion, { shouldDirty: false, shouldTouch: false });
+        }
+      }
+
+      syncAvailableRegions(nextCountry ?? null, nextRegion ?? null);
+    } catch (error) {
+      console.error('[applySuggestionGeography] unexpected error', error, params);
+    }
+  }, [API_BASE_URL, form]);
+
+  const handleProducerSuggestion = useCallback((suggestion: ProducerSuggestion | null) => {
+    if (!suggestion) return;
+    void applySuggestionGeography({
+      producer: suggestion.name,
+      wine: form.getValues("name"),
+      country: suggestion.country,
+      region: suggestion.region,
+    });
+  }, [applySuggestionGeography, form]);
+
+  const handleWineSuggestion = useCallback((suggestion: WineSuggestion | null) => {
+    if (!suggestion) return;
+    void applySuggestionGeography({
+      producer: form.getValues("producer"),
+      wine: suggestion.name,
+      country: suggestion.country,
+      region: suggestion.region,
+    });
+  }, [applySuggestionGeography, form]);
+
+  useEffect(() => {
+    const normalizedProducer = (producerValue || "").trim();
+    if (
+      previousProducerRef.current !== null &&
+      previousProducerRef.current !== normalizedProducer
+    ) {
+      form.setValue("name", "", { shouldDirty: false, shouldTouch: false });
+    }
+    previousProducerRef.current = normalizedProducer;
+  }, [producerValue, form]);
+
   // Reset form when selected wine changes
   useEffect(() => {
     form.reset({
@@ -284,18 +481,31 @@ export default function SubmitGuesses() {
     }
   }, [tasting?.showRatingField, tasting?.showNotesField, form]);
 
-  // Update available regions when country changes
+  // Update available regions when country/region changes
   useEffect(() => {
-    const country = form.watch("country");
-    if (country && countryToRegions[country as keyof typeof countryToRegions]) {
-      setAvailableRegions(countryToRegions[country as keyof typeof countryToRegions]);
-      // reset region when country changes
-      form.setValue("region", "");
-    } else {
+    if (!canonicalCountry) {
       setAvailableRegions([]);
-      form.setValue("region", "");
+      if (regionValue) {
+        form.setValue("region", "", { shouldDirty: false, shouldTouch: false });
+      }
+      return;
     }
-  }, [form.watch("country")]);
+
+    if (countryValue && countryValue !== canonicalCountry) {
+      form.setValue("country", canonicalCountry, { shouldDirty: false, shouldTouch: false });
+      return;
+    }
+
+    const regions = getRegionsForCountry(canonicalCountry);
+    const merged = new Set(regions);
+    if (canonicalRegion) {
+      merged.add(canonicalRegion);
+      if (regionValue && regionValue !== canonicalRegion) {
+        form.setValue("region", canonicalRegion, { shouldDirty: false, shouldTouch: false });
+      }
+    }
+    setAvailableRegions(Array.from(merged));
+  }, [canonicalCountry, canonicalRegion, countryValue, regionValue, form]);
 
   // Set first wine as selected on load
   useEffect(() => {
@@ -528,18 +738,31 @@ export default function SubmitGuesses() {
                                   <Globe className="h-4 w-4 mr-2 text-muted-foreground" />
                                   Land
                                 </FormLabel>
-                                <Select onValueChange={field.onChange} value={field.value || ""}>
-                                  <FormControl>
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Land auswählen" />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent>
-                                    {countries.map(country => (
-                                      <SelectItem key={country} value={country}>{country}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                <div className="flex items-center gap-2">
+                                  <Select onValueChange={field.onChange} value={field.value || ""}>
+                                    <FormControl>
+                                      <SelectTrigger className="w-full">
+                                        <SelectValue placeholder="Land auswählen" />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      {countries.map(country => (
+                                        <SelectItem key={country} value={country}>{country}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  {field.value && (
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      onClick={handleClearCountry}
+                                      aria-label="Land löschen"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                </div>
                                 <FormMessage />
                               </FormItem>
                             )}
@@ -554,22 +777,35 @@ export default function SubmitGuesses() {
                                   <MapPin className="h-4 w-4 mr-2 text-muted-foreground" />
                                   Region
                                 </FormLabel>
-                                <Select 
-                                  onValueChange={field.onChange} 
-                                  value={field.value || ""} 
-                                  disabled={!form.watch("country")}
-                                >
-                                  <FormControl>
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Region auswählen" />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent>
-                                    {availableRegions.map(region => (
-                                      <SelectItem key={region} value={region}>{region}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                <div className="flex items-center gap-2">
+                                  <Select 
+                                    onValueChange={field.onChange} 
+                                    value={field.value || ""} 
+                                    disabled={!canonicalCountry}
+                                  >
+                                    <FormControl>
+                                      <SelectTrigger className="w-full">
+                                        <SelectValue placeholder="Region auswählen" />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      {availableRegions.map(region => (
+                                        <SelectItem key={region} value={region}>{region}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  {field.value && (
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      onClick={handleClearRegion}
+                                      aria-label="Region löschen"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                </div>
                                 <FormMessage />
                               </FormItem>
                             )}
@@ -584,9 +820,30 @@ export default function SubmitGuesses() {
                                   <Building className="h-4 w-4 mr-2 text-muted-foreground" />
                                   Weingut
                                 </FormLabel>
-                                <FormControl>
-                                  <Input placeholder="z. B. Château Margaux" {...field} />
-                                </FormControl>
+                                <div className="flex items-center gap-2">
+                                  <FormControl>
+                                    <ProducerCombobox
+                                      value={field.value || ""}
+                                      onChange={(next) => field.onChange(next ?? "")}
+                                      placeholder="Weingut auswählen"
+                                      allowCustomValue
+                                      onSuggestionSelected={handleProducerSuggestion}
+                                      countryFilter={canonicalCountry}
+                                      regionFilter={canonicalRegion}
+                                    />
+                                  </FormControl>
+                                  {field.value && (
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      onClick={handleClearProducer}
+                                      aria-label="Weingut löschen"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                </div>
                                 <FormMessage />
                               </FormItem>
                             )}
@@ -601,9 +858,32 @@ export default function SubmitGuesses() {
                                   <Tag className="h-4 w-4 mr-2 text-muted-foreground" />
                                   Weinname
                                 </FormLabel>
-                                <FormControl>
-                                  <Input placeholder="z. B. Grand Vin" {...field} />
-                                </FormControl>
+                                <div className="flex items-center gap-2">
+                                  <FormControl>
+                                    <WineNameCombobox
+                                      producer={producerValue}
+                                      value={field.value || ""}
+                                      onChange={(next) => field.onChange(next ?? "")}
+                                      placeholder="Wein auswählen"
+                                      disabled={!producerValue}
+                                      allowCustomValue
+                                      onSuggestionSelected={handleWineSuggestion}
+                                      countryFilter={canonicalCountry}
+                                      regionFilter={canonicalRegion}
+                                    />
+                                  </FormControl>
+                                  {field.value && (
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      onClick={handleClearWine}
+                                      aria-label="Wein löschen"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                </div>
                                 <FormMessage />
                               </FormItem>
                             )}
