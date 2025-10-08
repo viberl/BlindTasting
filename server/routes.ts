@@ -491,7 +491,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const regionFilter = typeof req.query.region === 'string' ? req.query.region : undefined;
 
       const aggregated = new Map<string, {
-        name: string;
+        displayName: string;
+        canonicalName: string;
+        aliases: Set<string>;
         vinaturel: boolean;
         custom: boolean;
         vinaturelCount: number;
@@ -506,6 +508,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const canonicalName = canonicalizeProducerName(rawName) || rawName;
         const key = normalizeText(canonicalName);
         if (!key) continue;
+
+        const aliasCandidates = [rawName, canonicalName]
+          .map((alias) => (alias ?? '').trim())
+          .filter((alias) => alias.length > 0);
 
         const trimmedCountry = typeof row.country === 'string' ? row.country.trim() : '';
         const trimmedRegion = typeof row.region === 'string' ? row.region.trim() : '';
@@ -524,9 +530,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (trimmedCountry) existing.countries.add(trimmedCountry);
           if (canonicalRegion) existing.regions.add(canonicalRegion);
           if (trimmedRegion) existing.regions.add(trimmedRegion);
+          aliasCandidates.forEach((alias) => existing.aliases.add(alias));
+          if (!existing.displayName && rawName) {
+            existing.displayName = rawName;
+          }
         } else {
           aggregated.set(key, {
-            name: canonicalName,
+            displayName: rawName || canonicalName,
+            canonicalName,
+            aliases: new Set(aliasCandidates),
             vinaturel: vinCount > 0,
             custom: customCount > 0,
             vinaturelCount: vinCount,
@@ -556,7 +568,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const producers = Array.from(aggregated.values())
         .filter((item) => {
-          if (!item.name || item.name.trim().length === 0) return false;
+          if (!item.displayName || item.displayName.trim().length === 0) return false;
           const countryMatches = !countryFilter || Array.from(item.countries).some((c) => matchesCountry(c, countryFilter));
           const regionMatches = !regionFilter || Array.from(item.regions).some((r) => matchesRegion(r, regionFilter));
           if (!regionMatches) return false;
@@ -578,13 +590,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
             || Array.from(item.regions)[0]
             || null;
           return {
-            name: item.name,
+            name: item.displayName,
+            canonicalName: item.canonicalName,
+            aliases: Array.from(item.aliases),
             vinaturel: item.vinaturel,
             custom: item.custom,
             vinaturelCount: item.vinaturelCount,
             customCount: item.customCount,
             country: countryLabel,
             region: canonicalRegionLabel(regionLabel),
+          };
+        })
+        .map((item) => {
+          // ensure current display name is part of aliases for search purposes
+          const aliasSet = new Set(item.aliases ?? []);
+          if (item.name) aliasSet.add(item.name);
+          if (item.canonicalName) aliasSet.add(item.canonicalName);
+          return {
+            ...item,
+            aliases: Array.from(aliasSet),
           };
         })
         .sort((a, b) => a.name.localeCompare(b.name, 'de', { sensitivity: 'base' }));

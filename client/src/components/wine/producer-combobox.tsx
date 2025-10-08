@@ -17,6 +17,8 @@ import { apiRequest } from "@/lib/queryClient";
 
 export interface ProducerSuggestion {
   name: string;
+  canonicalName?: string;
+  aliases?: string[];
   vinaturel: boolean;
   custom: boolean;
   vinaturelCount?: number;
@@ -154,8 +156,9 @@ export default function ProducerCombobox({
                 const isSelected = displayValue.toLowerCase() === optionLabel.toLowerCase();
                 return (
                   <CommandItem
-                    key={optionLabel.toLowerCase()}
+                    key={`${(option.canonicalName || optionLabel).toLowerCase()}`}
                     value={optionLabel}
+                    keywords={option.aliases?.map((alias) => alias.toLowerCase()) ?? []}
                     onSelect={() => handleSelect(optionLabel, option)}
                   >
                     <Check
