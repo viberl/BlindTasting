@@ -615,11 +615,6 @@ export default function SubmitGuesses() {
     }
   };
 
-  // Handle completing the flight and returning to tasting details
-  const handleFinish = () => {
-    navigate(`/tasting/${tastingId}`);
-  };
-
   // Loading state (initial fetch only). Keep form visible during refetches.
   if ((tastingLoading || flightsLoading || participantsLoading) && !flights) {
     return (
@@ -636,9 +631,6 @@ export default function SubmitGuesses() {
         <div className="text-center">
           <h2 className="text-2xl font-bold text-amber-600">Flight nicht aktiv</h2>
           <p className="mt-2">Dieser Flight ist derzeit nicht aktiv.</p>
-          <Button className="mt-4" onClick={() => navigate(`/tasting/${tastingId}`)}>
-            Zurück zur Verkostung
-          </Button>
         </div>
       </div>
     );
@@ -651,9 +643,6 @@ export default function SubmitGuesses() {
         <div className="text-center">
           <h2 className="text-2xl font-bold text-red-600">Kein Teilnehmer</h2>
           <p className="mt-2">Sie nehmen an dieser Verkostung nicht teil.</p>
-          <Button className="mt-4" onClick={() => navigate(`/tasting/${tastingId}`)}>
-            Zurück zur Verkostung
-          </Button>
         </div>
       </div>
     );
@@ -666,9 +655,6 @@ export default function SubmitGuesses() {
         <div className="text-center">
           <h2 className="text-2xl font-bold text-amber-600">Flight nicht aktiv</h2>
           <p className="mt-2">Dieser Flight ist derzeit nicht aktiv.</p>
-          <Button className="mt-4" onClick={() => navigate(`/tasting/${tastingId}`)}>
-            Zurück zur Verkostung
-          </Button>
         </div>
       </div>
     );
@@ -1002,14 +988,7 @@ export default function SubmitGuesses() {
                         </div>
                       </div>
 
-                      <div className="flex justify-end space-x-4">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={handleFinish}
-                        >
-                          Zurück zur Verkostung
-                        </Button>
+                      <div className="flex justify-end">
                         <Button 
                           type="submit" 
                           className="bg-[#274E37] hover:bg-[#e65b2d]"

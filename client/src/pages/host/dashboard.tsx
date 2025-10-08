@@ -126,7 +126,12 @@ export default function HostDashboard() {
   });
 
   // Derived flags
-  const allFlightsCompleted = useMemo(() => (flights && flights.length > 0 && flights.every(f => !!f.completedAt)), [flights]);
+  const allFlightsCompleted = useMemo(() => {
+    if (!Array.isArray(flights) || flights.length === 0) {
+      return false;
+    }
+    return flights.every(flight => Boolean(flight.completedAt));
+  }, [flights]);
 
   // Per-flight stats (only when selected flight is completed)
   const { data: flightStats } = useQuery<any>({
@@ -147,7 +152,7 @@ export default function HostDashboard() {
       if (!res.ok) throw new Error('Fehler beim Laden der Endergebnis-Statistiken');
       return res.json();
     },
-    enabled: !!tastingId && allFlightsCompleted,
+    enabled: Boolean(tastingId && allFlightsCompleted),
   });
 
   // Participant detail modal state

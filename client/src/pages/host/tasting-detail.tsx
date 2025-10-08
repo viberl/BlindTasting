@@ -554,7 +554,12 @@ export default function TastingDetailPage() {
   // approveReview entfernt
 
   // Flag: Alle Flights abgeschlossen
-  const allFlightsCompleted = useMemo(() => (flights && flights.length > 0 && flights.every(f => !!f.completedAt)), [flights]);
+  const allFlightsCompleted = useMemo(() => {
+    if (!Array.isArray(flights) || flights.length === 0) {
+      return false;
+    }
+    return flights.every(flight => Boolean(flight.completedAt));
+  }, [flights]);
 
   // Letzter abgeschlossener Flight (für Zwischenergebnis)
   const lastCompletedFlight = useMemo(() => {
@@ -583,7 +588,7 @@ export default function TastingDetailPage() {
       if (!res.ok) throw new Error('Fehler beim Laden der Endergebnis-Statistiken');
       return res.json();
     },
-    enabled: !!tastingId && allFlightsCompleted,
+    enabled: Boolean(tastingId && allFlightsCompleted),
   });
 
   // Teilnehmer-Details (Weine vs. Tipps) – Modal (muss VOR jeglicher Rückgabe definiert sein)
