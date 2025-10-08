@@ -3,13 +3,14 @@ import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { 
+import {
   Tasting,
   Flight as BaseFlight,
   ScoringRule,
   Participant,
   Wine
 } from "@shared/schema";
+import { fetchScoringRules } from "@/lib/scoring-rules";
 import {
   Card,
   CardContent,
@@ -68,8 +69,10 @@ export default function TastingDetails() {
     }
   }, [flights]);
 
-  const { data: scoringRules } = useQuery<ScoringRule>({
+  const { data: scoringRules } = useQuery<ScoringRule | null>({
     queryKey: [`/api/tastings/${tastingId}/scoring`],
+    queryFn: () => fetchScoringRules(tastingId),
+    enabled: Number.isFinite(tastingId) && tastingId > 0,
   });
 
   const { data: participants, isLoading: participantsLoading } = useQuery<Participant[]>({

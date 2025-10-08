@@ -12,6 +12,8 @@ import { Heart } from 'lucide-react';
 import { useFavoriteWines, makeFavoriteKey } from '@/hooks/use-favorite-wines';
 import { getWineLink, LinkableWine } from '@/lib/wine-link-utils';
 import { canonicalizeCountry, canonicalizeRegion } from '@/lib/geo-normalize';
+import { fetchScoringRules } from '@/lib/scoring-rules';
+import type { ScoringRule as DbScoringRule } from '@shared/schema';
 
 type Participant = {
   id: number;
@@ -21,17 +23,7 @@ type Participant = {
   user: { id: number; name: string };
 };
 
-type ScoringRule = {
-  tastingId: number;
-  country: number;
-  region: number;
-  producer: number;
-  wineName: number;
-  vintage: number;
-  varietals: number;
-  displayCount?: number | null;
-  anyVarietalPoint?: boolean;
-};
+type ScoringRule = DbScoringRule;
 
 type FlightTopScorerResponse = {
   tastingId: number;
@@ -79,14 +71,10 @@ export default function FinalResults() {
     refetchOnWindowFocus: true,
     staleTime: 0,
   });
-  const { data: scoring } = useQuery<ScoringRule>({
+  const { data: scoring } = useQuery<ScoringRule | null>({
     queryKey: [`/api/tastings/${tastingId}/scoring`],
-    queryFn: async () => {
-      const res = await apiRequest('GET', `/api/tastings/${tastingId}/scoring`);
-      if (!res.ok) throw new Error('Scoring konnte nicht geladen werden');
-      return res.json();
-    },
-    enabled: !isNaN(tastingId),
+    queryFn: () => fetchScoringRules(tastingId),
+    enabled: Number.isFinite(tastingId) && tastingId > 0,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
     staleTime: 0,

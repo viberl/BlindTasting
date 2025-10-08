@@ -20,6 +20,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { toast, useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { fetchScoringRules } from "@/lib/scoring-rules";
 import { getWineLink, LinkableWine } from "@/lib/wine-link-utils";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -437,18 +438,8 @@ export default function TastingDetailPage() {
   const [feedbackSettings, setFeedbackSettings] = useState({ showRatingField: true, showNotesField: true });
   const { data: scoringRules, isLoading: isScoringRulesLoading } = useQuery<ScoringRule | null>({
     queryKey: [`/api/tastings/${tastingId}/scoring`],
-    queryFn: async () => {
-      try {
-        const res = await apiRequest('GET', `/api/tastings/${tastingId}/scoring`);
-        return await res.json();
-      } catch (error) {
-        if (error instanceof Error && error.message.startsWith('404')) {
-          return null;
-        }
-        throw error;
-      }
-    },
-    enabled: !isNaN(tastingId),
+    queryFn: () => fetchScoringRules(tastingId),
+    enabled: Number.isFinite(tastingId) && tastingId > 0,
   });
   
   // Lade Tastings-Details

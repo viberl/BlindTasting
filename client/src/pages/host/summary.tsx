@@ -6,6 +6,7 @@ import {
   Flight as BaseFlight,
   ScoringRule
 } from "@shared/schema";
+import { fetchScoringRules } from "@/lib/scoring-rules";
 
 interface Flight extends Omit<BaseFlight, 'wines'> {
   wines?: Array<{
@@ -70,8 +71,10 @@ export default function Summary() {
     queryKey: [`/api/tastings/${tastingId}/flights`],
   });
 
-  const { data: scoringRules, isLoading: scoringLoading } = useQuery<ScoringRule>({
+  const { data: scoringRules, isLoading: scoringLoading } = useQuery<ScoringRule | null>({
     queryKey: [`/api/tastings/${tastingId}/scoring`],
+    queryFn: () => fetchScoringRules(tastingId),
+    enabled: Number.isFinite(tastingId) && tastingId > 0,
   });
 
   const activateTastingMutation = useMutation({
@@ -104,7 +107,7 @@ export default function Summary() {
     );
   }
 
-  if (!tasting || !flights || !scoringRules) {
+  if (!tasting || !flights) {
     return (
       <div className="container mx-auto py-8 px-4">
         <div className="text-center">
@@ -112,6 +115,20 @@ export default function Summary() {
           <p className="mt-2">This tasting does not exist or you don't have access to it.</p>
           <Button className="mt-4" onClick={() => navigate("/")}>
             Return to Dashboard
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!scoringRules) {
+    return (
+      <div className="container mx-auto py-8 px-4">
+        <div className="text-center">
+          <h2 className="text-2xl font-bold text-amber-600">Scoring not configured</h2>
+          <p className="mt-2">Please configure the scoring rules before finalizing your tasting.</p>
+          <Button className="mt-4" onClick={() => navigate(`/host/scoring/${tastingId}`)}>
+            Configure scoring rules
           </Button>
         </div>
       </div>

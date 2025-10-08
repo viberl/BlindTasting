@@ -14,6 +14,7 @@ import FlightStatus from '@/components/tasting/flight-status';
 import Leaderboard from "@/components/tasting/leaderboard";
 import { ScoringRule } from "@shared/schema";
 import WineCard from "@/components/wine/wine-card";
+import { fetchScoringRules } from "@/lib/scoring-rules";
 
 declare module 'sonner' {
   interface ToasterProps {
@@ -115,14 +116,10 @@ export default function HostDashboard() {
     }
   }, [flights]);
 
-  const { data: scoringRules } = useQuery<ScoringRule>({
+  const { data: scoringRules } = useQuery<ScoringRule | null>({
     queryKey: ['scoringRules', tastingId],
-    queryFn: async () => {
-      const response = await fetch(`/api/tastings/${tastingId}/scoring`, { credentials: 'include' });
-      if (!response.ok) throw new Error('Fehler beim Laden der Bewertungsregeln');
-      return response.json();
-    },
-    enabled: !!tastingId,
+    queryFn: () => fetchScoringRules(tastingId),
+    enabled: Number.isFinite(tastingId) && tastingId > 0,
   });
 
   // Derived flags
