@@ -9,7 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Wine, User, LogOut, ChevronDown, Heart } from "lucide-react";
+import { Wine, User, LogOut, ChevronDown, Heart, Trophy } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export default function Navbar() {
@@ -76,6 +76,13 @@ export default function Navbar() {
                 >
                   <Heart className="mr-2 h-4 w-4" />
                   <span>Verkostete Weine</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="cursor-pointer text-[#274E37] focus:bg-[#274E37]/10 focus:text-[#274E37]"
+                  onClick={() => navigate("/trophies")}
+                >
+                  <Trophy className="mr-2 h-4 w-4" />
+                  <span>Trophäenregal</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="cursor-pointer text-[#274E37] focus:bg-[#274E37]/10 focus:text-[#274E37]"
