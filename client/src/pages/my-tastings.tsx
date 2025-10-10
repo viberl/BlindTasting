@@ -45,7 +45,7 @@ export default function MyTastingsPage() {
 
   if (isLoading) return <div className="container mx-auto p-6">Lade…</div>;
 
-  // Zeige im Tab "Teilgenommen" alle Tastings, an denen der User teilgenommen hat – unabhängig vom Status
+  // Zeige im Tab "Teilgenommen" nur abgeschlossene Tastings, an denen der User teilgenommen hat
   const hostedCompleted = (data?.hosted || []).filter(t => (t.status || '').toLowerCase() === 'completed');
   // Fallback: falls participating serverseitig leer ist, ergänze eingeladene Tastings
   const participatedAllRaw = [
@@ -53,6 +53,7 @@ export default function MyTastingsPage() {
     ...(data?.invited || []),
   ];
   const participatedAll = Array.from(new Map(participatedAllRaw.map(t => [t.id, t])).values());
+  const participatedCompleted = participatedAll.filter(t => (t.status || '').toLowerCase() === 'completed');
 
   const renderCard = (t: Tasting, isHost: boolean) => {
     const statusKey = (t.status || '').toLowerCase();
@@ -125,9 +126,9 @@ export default function MyTastingsPage() {
               >
                 <User className="h-4 w-4" />
                 <span className="truncate">Teilgenommen</span>
-                {participatedAll.length > 0 && (
+                {participatedCompleted.length > 0 && (
                   <span className="ml-1 min-w-[20px] h-5 flex items-center justify-center px-1.5 py-0.5 rounded-full bg-vinaturel-original text-white text-xs font-medium">
-                    {participatedAll.length}
+                    {participatedCompleted.length}
                   </span>
                 )}
               </TabsTrigger>
@@ -148,8 +149,8 @@ export default function MyTastingsPage() {
         </div>
         <TabsContent value="participated">
           <div className="grid gap-4 sm:grid-cols-2">
-            {participatedAll.length > 0 ? participatedAll.map(t => renderCard(t, false)) : (
-              <div className="text-gray-500">Keine Verkostungen gefunden</div>
+            {participatedCompleted.length > 0 ? participatedCompleted.map(t => renderCard(t, false)) : (
+              <div className="text-gray-500">Keine abgeschlossenen Verkostungen</div>
             )}
           </div>
         </TabsContent>
